@@ -56,6 +56,29 @@ def compute_dif(df: pd.DataFrame, fast: int = 12, slow: int = 26) -> pd.Series:
     ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
     return ema_fast - ema_slow
 
+def compute_macd(
+    df: pd.DataFrame,
+    fast: int = 12,
+    slow: int = 26,
+    signal: int = 9,
+    price_col: str = "close",
+    factor: float = 2.0,      # MACD 柱是否乘2（A股常用口径=2.0）
+    adjust: bool = False,     # 与 compute_dif 一致默认不调整
+) -> pd.DataFrame:
+    """
+    计算 MACD 全量指标：
+    - DIF = EMA(fast) - EMA(slow)
+    - DEA = EMA(DIF, signal)
+    - MACD = factor * (DIF - DEA)  # factor=2 与券商口径一致
+    返回：在原 df 基础上新增 'DIF','DEA','MACD' 三列
+    """
+    price = pd.to_numeric(df[price_col], errors="coerce")
+    ema_fast = price.ewm(span=fast, adjust=adjust).mean()
+    ema_slow = price.ewm(span=slow, adjust=adjust).mean()
+    dif = ema_fast - ema_slow
+    dea = dif.ewm(span=signal, adjust=adjust).mean()
+    macd = factor * (dif - dea)
+    return df.assign(DIF=dif, DEA=dea, MACD=macd)
 
 def bbi_deriv_uptrend(
     bbi: pd.Series,
