@@ -133,7 +133,21 @@ def main():
         logger.info("============== 选股结果 [%s] ==============", alias)
         logger.info("交易日: %s", trade_date.date())
         logger.info("符合条件股票数: %d", len(picks))
-        logger.info("%s", ", ".join(picks) if picks else "无符合条件股票")
+        
+        if picks:
+            logger.info("选中股票及原因：")
+            for code in picks:
+                # 尝试获取选股原因
+                if hasattr(selector, 'explain_selection'):
+                    try:
+                        reason = selector.explain_selection(code, trade_date, data[code])
+                        logger.info("  %s: %s", code, reason)
+                    except Exception as e:
+                        logger.info("  %s: 选中（原因获取失败: %s）", code, str(e))
+                else:
+                    logger.info("  %s: 选中（该选股器未提供详细原因）", code)
+        else:
+            logger.info("无符合条件股票")
 
 
 if __name__ == "__main__":

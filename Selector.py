@@ -245,7 +245,54 @@ class BBIKDJSelector:
                 picks.append(code)
         return picks
     
-    
+    def explain_selection(self, code: str, date: pd.Timestamp, df: pd.DataFrame) -> str:
+        """返回该股票被选中的详细原因"""
+        hist = df[df["date"] <= date].tail(self.max_window + 20)
+        if not self._passes_filters(hist):
+            return "未通过筛选（不应出现）"
+        
+        hist = hist.copy()
+        hist["BBI"] = compute_bbi(hist)
+        reasons = []
+        
+        # 1. 收盘价波动幅度
+        win = hist.tail(self.max_window)
+        high, low = win["close"].max(), win["close"].min()
+        price_range = (high / low - 1) * 100
+        reasons.append(f"价格波动率: {price_range:.2f}% (≤{self.price_range_pct*100:.1f}%)")
+        
+        # 2. BBI 上升趋势
+        bbi_pass = bbi_deriv_uptrend(
+            hist["BBI"],
+            min_window=self.bbi_min_window,
+            max_window=self.max_window,
+            q_threshold=self.bbi_q_threshold,
+        )
+        reasons.append(f"BBI上升趋势: {'通过' if bbi_pass else '未通过'} (允许{self.bbi_q_threshold*100:.1f}%回撤)")
+        
+        # 3. KDJ 分析
+        kdj = compute_kdj(hist)
+        j_today = float(kdj.iloc[-1]["J"])
+        j_window = kdj["J"].tail(self.max_window).dropna()
+        j_quantile = float(j_window.quantile(self.j_q_threshold))
+        
+        condition1 = j_today < self.j_threshold
+        condition2 = j_today <= j_quantile
+        kdj_reason = f"J值: {j_today:.2f}"
+        if condition1:
+            kdj_reason += f" < {self.j_threshold} ✓"
+        if condition2:
+            kdj_reason += f" ≤ {j_quantile:.2f}({self.j_q_threshold*100:.0f}%分位) ✓"
+        reasons.append(kdj_reason)
+        
+        # 4. MACD DIF
+        hist["DIF"] = compute_dif(hist)
+        dif_today = hist["DIF"].iloc[-1]
+        reasons.append(f"DIF: {dif_today:.4f} {'> 0 ✓' if dif_today > 0 else '≤ 0 ✗'}")
+        
+        return "; ".join(reasons)
+
+
 class SuperB1Selector:
     """SuperB1 选股器
 
@@ -361,6 +408,69 @@ class SuperB1Selector:
 
         return picks
 
+    def explain_selection(self, code: str, date: pd.Timestamp, df: pd.DataFrame) -> str:
+        """返回该股票被选中的详细原因"""
+        min_len = self.lookback_n + self._extra_for_bbi
+        hist = df[df["date"] <= date].tail(min_len)
+        
+        if not self._passes_filters(hist):
+            return "未通过筛选（不应出现）"
+        
+        reasons = []
+        
+        # Step-1: 搜索满足 BBIKDJ 的 t_m
+        lb_hist = hist.tail(self.lookback_n + 1)
+        tm_date = None
+        tm_idx = None
+        
+        for idx in lb_hist.index[:-1]:
+            if self.bbi_selector._passes_filters(hist.loc[:idx]):
+                tm_idx = idx
+                tm_date = hist.loc[idx, "date"].strftime("%Y-%m-%d")
+                # 验证盘整条件
+                stable_seg = hist.loc[tm_idx:hist.index[-2], "close"]
+                if len(stable_seg) >= 3:
+                    high, low = stable_seg.max(), stable_seg.min()
+                    if low > 0 and (high / low - 1) <= self.close_vol_pct:
+                        break
+                else:
+                    tm_idx = None
+                    tm_date = None
+        
+        if tm_date:
+            reasons.append(f"B1形态日期: {tm_date}")
+            
+            # 盘整区间分析
+            stable_seg = hist.loc[tm_idx:hist.index[-2], "close"]
+            vol_pct = (stable_seg.max() / stable_seg.min() - 1) * 100
+            reasons.append(f"盘整波动率: {vol_pct:.2f}% (≤{self.close_vol_pct*100:.1f}%)")
+        else:
+            reasons.append("B1形态: 未找到")
+        
+        # Step-2: 当日跌幅
+        close_today = hist["close"].iloc[-1]
+        close_prev = hist["close"].iloc[-2]
+        drop_pct = (close_prev - close_today) / close_prev * 100
+        reasons.append(f"当日跌幅: {drop_pct:.2f}% (≥{self.price_drop_pct*100:.1f}%)")
+        
+        # Step-3: J 值分析
+        kdj = compute_kdj(hist)
+        j_today = float(kdj["J"].iloc[-1])
+        j_window = kdj["J"].iloc[-self.lookback_n:].dropna()
+        j_q_val = float(j_window.quantile(self.j_q_threshold)) if not j_window.empty else float('nan')
+        
+        condition1 = j_today < self.j_threshold
+        condition2 = j_today <= j_q_val if not pd.isna(j_q_val) else False
+        
+        j_reason = f"J值: {j_today:.2f}"
+        if condition1:
+            j_reason += f" < {self.j_threshold} ✓"
+        if condition2:
+            j_reason += f" ≤ {j_q_val:.2f}({self.j_q_threshold*100:.0f}%分位) ✓"
+        reasons.append(j_reason)
+        
+        return "; ".join(reasons)
+
 
 class PeakKDJSelector:
     """
@@ -473,6 +583,81 @@ class PeakKDJSelector:
                 picks.append(code)
         return picks
     
+    def explain_selection(self, code: str, date: pd.Timestamp, df: pd.DataFrame) -> str:
+        """返回该股票被选中的详细原因"""
+        hist = df[df["date"] <= date].tail(self.max_window + 20)
+        
+        if not self._passes_filters(hist):
+            return "未通过筛选（不应出现）"
+        
+        hist = hist.copy().sort_values("date")
+        hist["oc_max"] = hist[["open", "close"]].max(axis=1)
+        reasons = []
+        
+        # 1. 峰值分析
+        peaks_df = _find_peaks(hist, column="oc_max", distance=6, prominence=0.5)
+        date_today = hist.iloc[-1]["date"]
+        peaks_df = peaks_df[peaks_df["date"] < date_today]
+        reasons.append(f"识别峰值数: {len(peaks_df)}个")
+        
+        if len(peaks_df) >= 2:
+            peak_t = peaks_df.iloc[-1]
+            peaks_list = peaks_df.reset_index(drop=True)
+            oc_t = peak_t.oc_max
+            total_peaks = len(peaks_list)
+            
+            # 2. 寻找目标峰值
+            target_peak = None
+            for idx in range(total_peaks - 2, -1, -1):
+                peak_prev = peaks_list.loc[idx]
+                oc_prev = peak_prev.oc_max
+                if oc_t <= oc_prev:
+                    continue
+                
+                # 检查区间内其他峰的条件
+                if total_peaks >= 3 and idx < total_peaks - 2:
+                    inter_oc = peaks_list.loc[idx + 1 : total_peaks - 2, "oc_max"]
+                    if not (inter_oc < oc_prev).all():
+                        continue
+                
+                # 检查gap条件
+                date_prev = peak_prev.date
+                mask = (hist["date"] > date_prev) & (hist["date"] < peak_t.date)
+                min_close = hist.loc[mask, "close"].min()
+                if pd.isna(min_close) or oc_prev <= min_close * (1 + self.gap_threshold):
+                    continue
+                
+                target_peak = peak_prev
+                break
+            
+            if target_peak is not None:
+                target_date = target_peak.date.strftime("%Y-%m-%d")
+                reasons.append(f"目标峰值日期: {target_date} (oc_max: {target_peak.oc_max:.2f})")
+                
+                # 3. 价格波动分析
+                close_today = hist.iloc[-1]["close"]
+                fluc_pct = abs(close_today - target_peak.close) / target_peak.close * 100
+                reasons.append(f"价格波动率: {fluc_pct:.2f}% (≤{self.fluc_threshold*100:.1f}%)")
+            else:
+                reasons.append("目标峰值: 未找到符合条件的峰值")
+        
+        # 4. KDJ 分析
+        kdj = compute_kdj(hist)
+        j_today = float(kdj.iloc[-1]["J"])
+        j_window = kdj["J"].tail(self.max_window).dropna()
+        j_quantile = float(j_window.quantile(self.j_q_threshold))
+        
+        condition1 = j_today < self.j_threshold
+        condition2 = j_today <= j_quantile
+        kdj_reason = f"J值: {j_today:.2f}"
+        if condition1:
+            kdj_reason += f" < {self.j_threshold} ✓"
+        if condition2:
+            kdj_reason += f" ≤ {j_quantile:.2f}({self.j_q_threshold*100:.0f}%分位) ✓"
+        reasons.append(kdj_reason)
+        
+        return "; ".join(reasons)
+
 
 class BBIShortLongSelector:
     """
@@ -654,3 +839,72 @@ class BreakoutVolumeKDJSelector:
             if self._passes_filters(hist):
                 picks.append(code)
         return picks
+
+    def explain_selection(self, code: str, date: pd.Timestamp, df: pd.DataFrame) -> str:
+        """返回该股票被选中的详细原因"""
+        hist = df[df["date"] <= date]
+        
+        if not self._passes_filters(hist):
+            return "未通过筛选（不应出现）"
+        
+        hist = hist.tail(self.max_window).copy()
+        reasons = []
+        
+        # 1. 收盘价波动幅度
+        high, low = hist["close"].max(), hist["close"].min()
+        price_range = (high / low - 1) * 100
+        reasons.append(f"价格波动率: {price_range:.2f}% (≤{self.price_range_pct*100:.1f}%)")
+        
+        # 2. 计算技术指标
+        hist = compute_kdj(hist)
+        hist["pct_chg"] = hist["close"].pct_change() * 100
+        hist["DIF"] = compute_dif(hist)
+        
+        # 3. KDJ 分析
+        j_today = float(hist["J"].iloc[-1])
+        j_window = hist["J"].tail(self.max_window).dropna()
+        j_quantile = float(j_window.quantile(self.j_q_threshold))
+        
+        condition1 = j_today < self.j_threshold
+        condition2 = j_today <= j_quantile
+        kdj_reason = f"J值: {j_today:.2f}"
+        if condition1:
+            kdj_reason += f" < {self.j_threshold} ✓"
+        if condition2:
+            kdj_reason += f" ≤ {j_quantile:.2f}({self.j_q_threshold*100:.0f}%分位) ✓"
+        reasons.append(kdj_reason)
+        
+        # 4. DIF 分析
+        dif_today = hist["DIF"].iloc[-1]
+        reasons.append(f"DIF: {dif_today:.4f} {'> 0 ✓' if dif_today > 0 else '≤ 0 ✗'}")
+        
+        # 5. 放量突破分析
+        n = len(hist)
+        wnd_start = max(0, n - self.offset - 1)
+        last_idx = n - 1
+        
+        breakthrough_dates = []
+        for t_idx in range(wnd_start, last_idx):
+            row = hist.iloc[t_idx]
+            
+            # 检查所有突破条件
+            if (row["pct_chg"] >= self.up_threshold and 
+                row["volume"] > 0):
+                
+                vols_except_T = hist["volume"].drop(index=hist.index[t_idx])
+                vol_condition = (vols_except_T <= self.volume_threshold * row["volume"]).all()
+                
+                price_condition = row["close"] > hist["close"].iloc[:t_idx].max()
+                
+                j_condition = (hist["J"].iloc[t_idx:last_idx] > hist["J"].iloc[-1] - 10).all()
+                
+                if vol_condition and price_condition and j_condition:
+                    breakthrough_date = row["date"].strftime("%Y-%m-%d") if hasattr(row["date"], 'strftime') else str(row["date"])[:10]
+                    breakthrough_dates.append(f"{breakthrough_date}(涨幅{row['pct_chg']:.1f}%)")
+        
+        if breakthrough_dates:
+            reasons.append(f"突破日期: {', '.join(breakthrough_dates)}")
+        else:
+            reasons.append("突破条件: 未找到符合条件的突破日")
+        
+        return "; ".join(reasons)
