@@ -130,6 +130,14 @@ def plot_with_plotly(
     df = add_ma(df.copy(), ma_close, "Close")
     # 指标
     df = _attach_indicators(df)
+    
+    # 创建连续的x轴索引，避免节假日空白
+    df_plot = df.reset_index()
+    x_axis = list(range(len(df_plot)))
+    dates = df_plot["Date"]
+    
+    # 格式化日期用于hover显示
+    date_strings = [d.strftime("%Y-%m-%d") for d in dates]
 
     # 四行子图：价格+BBI | MACD | KDJ | 成交量
     fig = make_subplots(
@@ -138,13 +146,23 @@ def plot_with_plotly(
         subplot_titles=[price_title, macd_title, kdj_title, vol_title],  # ← 用带颜色标题
     )
 
+    # 创建自定义hover文本
+    hover_texts = [
+        f"{date_str}<br>开盘: {open_val:.4f}<br>最高: {high_val:.4f}<br>最低: {low_val:.4f}<br>收盘: {close_val:.4f}"
+        for date_str, open_val, high_val, low_val, close_val in zip(
+            date_strings, df_plot["Open"], df_plot["High"], df_plot["Low"], df_plot["Close"]
+        )
+    ]
+    
     # 价格主图：蜡烛 + MA + BBI
     candle = go.Candlestick(
-        x=df.index,
-        open=df["Open"],
-        high=df["High"],
-        low=df["Low"],
-        close=df["Close"],
+        x=x_axis,
+        open=df_plot["Open"],
+        high=df_plot["High"],
+        low=df_plot["Low"],
+        close=df_plot["Close"],
+        text=hover_texts,  # ← 使用格式化后的文本
+        hoverinfo="text",  # ← 只显示自定义文本
         increasing_line_color=up_color,
         decreasing_line_color=down_color,
         increasing_fillcolor=up_color,
@@ -158,59 +176,101 @@ def plot_with_plotly(
         name = f"MA{w}(Close)"
         color = MA_COLORS[i % len(MA_COLORS)]
         fig.add_trace(
-            go.Scatter(x=df.index, y=df[name], mode="lines",
-                       name=name, line=dict(width=1.2, color=color)),
+            go.Scatter(
+                x=x_axis, y=df_plot[name], mode="lines",
+                name=name, line=dict(width=1.2, color=color),
+                hovertemplate=f"{name}: %{{y:.4f}}<extra></extra>"
+            ),
             row=1, col=1
         )
 
     fig.add_trace(
-        go.Scatter(x=df.index, y=df["BBI"], mode="lines",
-                   name="BBI", line=dict(width=1.3, color=BBI_COLOR)),
+        go.Scatter(
+            x=x_axis, y=df_plot["BBI"], mode="lines",
+            name="BBI", line=dict(width=1.3, color=BBI_COLOR),
+            hovertemplate="BBI: %{y:.4f}<extra></extra>"
+        ),
         row=1, col=1
     )
 
     # MACD 面板：柱 + DIF/DEA
-    macd_colors = [up_color if v >= 0 else down_color for v in df["MACD"].fillna(0)]
+    macd_colors = [up_color if v >= 0 else down_color for v in df_plot["MACD"].fillna(0)]
     fig.add_trace(
-        go.Bar(x=df.index, y=df["MACD"], marker_color=macd_colors, name="MACD"),
+        go.Bar(
+            x=x_axis, y=df_plot["MACD"], marker_color=macd_colors, name="MACD",
+            customdata=date_strings,  # ← 添加日期数据
+            hovertemplate="<b>%{customdata}</b><br>" +  # ← 添加日期显示
+                          "MACD: %{y:.4f}<extra></extra>"
+        ),
         row=2, col=1
     )
     fig.add_trace(
-        go.Scatter(x=df.index, y=df["DIF"], mode="lines",
-                   name="DIF", line=dict(width=1.2, color=DIF_COLOR)),
+        go.Scatter(
+            x=x_axis, y=df_plot["DIF"], mode="lines",
+            name="DIF", line=dict(width=1.2, color=DIF_COLOR),
+            hovertemplate="DIF: %{y:.4f}<extra></extra>"
+        ),
         row=2, col=1
     )
     fig.add_trace(
-        go.Scatter(x=df.index, y=df["DEA"], mode="lines",
-                   name="DEA", line=dict(width=1.2, color=DEA_COLOR)),
+        go.Scatter(
+            x=x_axis, y=df_plot["DEA"], mode="lines",
+            name="DEA", line=dict(width=1.2, color=DEA_COLOR),
+            hovertemplate="DEA: %{y:.4f}<extra></extra>"
+        ),
         row=2, col=1
     )
 
     # KDJ 面板：K/D/J
-    fig.add_trace(go.Scatter(x=df.index, y=df["K"], mode="lines",
-               name="K", line=dict(width=1.1, color=K_COLOR)), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["D"], mode="lines",
-               name="D", line=dict(width=1.1, color=D_COLOR)), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["J"], mode="lines",
-               name="J", line=dict(width=1.1, color=J_COLOR)), row=3, col=1)
+    fig.add_trace(go.Scatter(
+        x=x_axis, y=df_plot["K"], mode="lines",
+        name="K", line=dict(width=1.1, color=K_COLOR),
+        customdata=date_strings,  # ← 添加日期数据
+        hovertemplate="<b>%{customdata}</b><br>" +  # ← 添加日期显示
+                      "K: %{y:.2f}<extra></extra>"
+    ), row=3, col=1)
+    
+    fig.add_trace(go.Scatter(
+        x=x_axis, y=df_plot["D"], mode="lines",
+        name="D", line=dict(width=1.1, color=D_COLOR),
+        hovertemplate="D: %{y:.2f}<extra></extra>"
+    ), row=3, col=1)
+    
+    fig.add_trace(go.Scatter(
+        x=x_axis, y=df_plot["J"], mode="lines",
+        name="J", line=dict(width=1.1, color=J_COLOR),
+        hovertemplate="J: %{y:.2f}<extra></extra>"
+    ), row=3, col=1)
 
     # 成交量面板
-    vol_colors = [up_color if c >= o else down_color for o, c in zip(df["Open"], df["Close"])]
+    vol_colors = [up_color if c >= o else down_color for o, c in zip(df_plot["Open"], df_plot["Close"])]
     fig.add_trace(
-        go.Bar(x=df.index, y=df["Volume"], marker_color=vol_colors, name="Volume"),
+        go.Bar(
+            x=x_axis, y=df_plot["Volume"], marker_color=vol_colors, name="Volume",
+            customdata=date_strings,  # ← 添加日期数据
+            hovertemplate="<b>%{customdata}</b><br>" +  # ← 添加日期显示
+                          "成交量: %{y:.0f}<extra></extra>"
+        ),
         row=4, col=1
     )
     if ma_vol and ma_vol > 1:
-        vma = df["Volume"].rolling(ma_vol).mean()
+        vma = df_plot["Volume"].rolling(ma_vol).mean()
         fig.add_trace(
-            go.Scatter(x=df.index, y=vma, mode="lines",
-                       name=f"MA{ma_vol}(Volume)",
-                       line=dict(width=1.0, color=VOL_MA_COLOR)),
+            go.Scatter(
+                x=x_axis, y=vma, mode="lines",
+                name=f"MA{ma_vol}(Volume)",
+                line=dict(width=1.0, color=VOL_MA_COLOR),
+                hovertemplate=f"MA{ma_vol}(Volume): %{{y:.0f}}<extra></extra>"
+            ),
             row=4, col=1
         )
 
+    # 设置x轴显示日期标签（每隔一定间隔显示）
+    tick_step = max(1, len(dates) // 10)  # 大约显示10个标签
+    tickvals = list(range(0, len(dates), tick_step))
+    ticktext = [dates.iloc[i].strftime("%Y-%m-%d") for i in tickvals]
+    
     # 布局与交互
-    # 1) 布局：顶部轴只保留区间按钮；rangeslider 绑在底部轴
     fig.update_layout(
         title=f"{code} 蜡烛图 + BBI / MACD / KDJ",
         dragmode="pan",
@@ -224,14 +284,23 @@ def plot_with_plotly(
                     dict(step="all", label="ALL"),
                 ]
             ),
-            type="date",
+            tickvals=tickvals,
+            ticktext=ticktext,
+            tickangle=45,  # 倾斜显示日期，避免重叠
         ),
         hovermode="x unified",
         showlegend=False,
         margin=dict(l=40, r=20, t=80, b=40),
     )
-    fig.update_xaxes(rangeslider_visible=False)  # 先禁用所有
-    fig.update_layout(xaxis4=dict(rangeslider=dict(visible=True, thickness=0.08), type="date"))
+    fig.update_xaxes(rangeslider_visible=False)
+    fig.update_layout(
+        xaxis4=dict(
+            rangeslider=dict(visible=True, thickness=0.08),
+            tickvals=tickvals,
+            ticktext=ticktext,
+            tickangle=45,
+        )
+    )
 
     # 2) 各栏纵轴：开启按可见区间自动重算
     fig.update_yaxes(title_text="价格",  autorange=True, row=1, col=1)
