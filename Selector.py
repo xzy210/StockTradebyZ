@@ -739,7 +739,73 @@ class BBIShortLongSelector:
             if self._passes_filters(hist):
                 picks.append(code)
         return picks
-
+    
+    def explain_selection(self, code: str, date: pd.Timestamp, df: pd.DataFrame) -> str:
+        """返回该股票被选中的详细原因"""
+        hist = df[df["date"] <= date]
+        if hist.empty:
+            return "无历史数据"
+        
+        # 预留足够长度
+        need_len = (
+            max(self.n_short, self.n_long)
+            + self.bbi_min_window
+            + self.m
+        )
+        hist = hist.tail(max(need_len, self.max_window))
+        
+        if not self._passes_filters(hist):
+            return "未通过筛选（不应出现）"
+        
+        hist = hist.copy()
+        hist["BBI"] = compute_bbi(hist)
+        hist["RSV_short"] = compute_rsv(hist, self.n_short)
+        hist["RSV_long"] = compute_rsv(hist, self.n_long)
+        hist["DIF"] = compute_dif(hist)
+        
+        reasons = []
+        
+        # 1. BBI 上升趋势分析
+        bbi_pass = bbi_deriv_uptrend(
+            hist["BBI"],
+            min_window=self.bbi_min_window,
+            max_window=self.max_window,
+            q_threshold=self.bbi_q_threshold,
+        )
+        reasons.append(f"BBI上升趋势: {'通过' if bbi_pass else '未通过'} (允许{self.bbi_q_threshold*100:.1f}%回撤)")
+        
+        # 2. 长期RSV分析
+        win = hist.iloc[-self.m:]
+        long_rsv_values = win["RSV_long"].values
+        long_ok = (long_rsv_values >= 80).all()
+        long_min = long_rsv_values.min()
+        long_max = long_rsv_values.max()
+        reasons.append(f"长期RSV({self.n_long}日): 全部≥80 {'✓' if long_ok else '✗'} (范围: {long_min:.1f}-{long_max:.1f})")
+        
+        # 3. 短期RSV"补票"模式分析
+        short_rsv_values = win["RSV_short"].values
+        short_start_end_ok = (short_rsv_values[0] >= 80 and short_rsv_values[-1] >= 80)
+        short_has_below_20 = (short_rsv_values < 20).any()
+        
+        short_reason = f"短期RSV({self.n_short}日)补票模式: "
+        if short_start_end_ok:
+            short_reason += f"首尾≥80 ✓ ({short_rsv_values[0]:.1f}→{short_rsv_values[-1]:.1f})"
+        else:
+            short_reason += f"首尾≥80 ✗ ({short_rsv_values[0]:.1f}→{short_rsv_values[-1]:.1f})"
+        
+        if short_has_below_20:
+            below_20_indices = [i for i, v in enumerate(short_rsv_values) if v < 20]
+            short_reason += f"; 中间有<20调整 ✓ (第{below_20_indices}天)"
+        else:
+            short_reason += f"; 中间有<20调整 ✗ (最低{short_rsv_values.min():.1f})"
+        
+        reasons.append(short_reason)
+        
+        # 4. MACD DIF分析
+        dif_today = hist["DIF"].iloc[-1]
+        reasons.append(f"DIF: {dif_today:.4f} {'> 0 ✓' if dif_today > 0 else '≤ 0 ✗'}")
+        
+        return "; ".join(reasons)
 
 class BreakoutVolumeKDJSelector:
     """
