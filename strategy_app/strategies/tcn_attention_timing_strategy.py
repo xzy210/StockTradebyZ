@@ -43,6 +43,7 @@ class TCNAttentionTimingStrategy(BaseStrategy):
         )
         self._predictor: Optional[TimingModelPredictor] = None
         self.last_prediction: Optional[TimingPrediction] = None
+        self._backtest_signal_trace: list[dict[str, Any]] = []
 
     def check(self, code: str, data: pd.DataFrame) -> Optional[Dict[str, Any]]:
         prediction = self._predict(data)
@@ -56,6 +57,7 @@ class TCNAttentionTimingStrategy(BaseStrategy):
         }
 
     def initialize_backtest(self, context, prepared) -> None:
+        self._backtest_signal_trace = []
         self._ensure_predictor()
 
     def generate_signals(self, data: Any, context: Any = None) -> list[StrategySignal]:
@@ -80,7 +82,10 @@ class TCNAttentionTimingStrategy(BaseStrategy):
             "frequency": getattr(self._predictor, "frequency", "") if self._predictor is not None else "",
         }
 
-        if self._is_buy_signal(prediction) and position_qty <= 0 and bool(self.params.get("allow_buy", True)):
+        is_buy = self._is_buy_signal(prediction) and position_qty <= 0 and bool(self.params.get("allow_buy", True))
+        is_sell = self._is_sell_signal(prediction) and position_qty > 0 and bool(self.params.get("sell_on_down", True))
+        if is_buy:
+            self._record_signal_trace(data, symbol, current_price, position_qty, prediction, BUY, "达到看多交易门槛")
             return [
                 StrategySignal(
                     symbol=symbol,
@@ -96,7 +101,8 @@ class TCNAttentionTimingStrategy(BaseStrategy):
                 )
             ]
 
-        if self._is_sell_signal(prediction) and position_qty > 0 and bool(self.params.get("sell_on_down", True)):
+        if is_sell:
+            self._record_signal_trace(data, symbol, current_price, position_qty, prediction, SELL, "达到看空交易门槛")
             return [
                 StrategySignal(
                     symbol=symbol,
@@ -112,6 +118,7 @@ class TCNAttentionTimingStrategy(BaseStrategy):
                 )
             ]
 
+        self._record_signal_trace(data, symbol, current_price, position_qty, prediction, HOLD, "信号未达到交易门槛")
         return [
             StrategySignal(
                 symbol=symbol,
@@ -154,6 +161,50 @@ class TCNAttentionTimingStrategy(BaseStrategy):
         threshold = float(self.params.get("down_threshold") or 0.0)
         margin = float(self.params.get("direction_margin") or 0.0)
         return prediction.p_down >= threshold and (prediction.p_down - prediction.p_up) >= margin
+
+    def _record_signal_trace(
+        self,
+        data: Any,
+        symbol: str,
+        current_price: Optional[float],
+        position_qty: int,
+        prediction: TimingPrediction,
+        action: str,
+        reason: str,
+    ) -> None:
+        up_threshold = float(self.params.get("up_threshold") or 0.0)
+        down_threshold = float(self.params.get("down_threshold") or 0.0)
+        margin = float(self.params.get("direction_margin") or 0.0)
+        self._backtest_signal_trace.append(
+            {
+                "date": (data or {}).get("date"),
+                "symbol": symbol,
+                "close": current_price,
+                "position_qty": int(position_qty or 0),
+                "action": action,
+                "reason": reason,
+                "label": prediction.label,
+                "p_down": prediction.p_down,
+                "p_flat": prediction.p_flat,
+                "p_up": prediction.p_up,
+                "confidence": prediction.confidence,
+                "up_threshold": up_threshold,
+                "down_threshold": down_threshold,
+                "direction_margin": margin,
+                "up_minus_down": prediction.p_up - prediction.p_down,
+                "down_minus_up": prediction.p_down - prediction.p_up,
+                "buy_threshold_hit": prediction.p_up >= up_threshold
+                and (prediction.p_up - prediction.p_down) >= margin,
+                "sell_threshold_hit": prediction.p_down >= down_threshold
+                and (prediction.p_down - prediction.p_up) >= margin,
+                "upper_price": prediction.upper_price,
+                "lower_price": prediction.lower_price,
+            }
+        )
+
+    def finalize_backtest_result(self, result: dict, **_kwargs) -> dict:
+        result["timing_signal_trace"] = pd.DataFrame(self._backtest_signal_trace)
+        return result
 
 
 def _current_price(data: Any, symbol: str) -> Optional[float]:

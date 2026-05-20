@@ -276,8 +276,23 @@ class TimingStrategyWidget(QWidget):
     def _build_backtest_tab(self) -> QWidget:
         tab = QWidget(self)
         layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        splitter = QSplitter(Qt.Orientation.Vertical, tab)
+        splitter.setChildrenCollapsible(False)
+        layout.addWidget(splitter, 1)
+
+        top_scroll = QScrollArea(splitter)
+        top_scroll.setWidgetResizable(True)
+        top_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        top_scroll.setMinimumHeight(220)
+        top_inner = QWidget(top_scroll)
+        top_layout = QVBoxLayout(top_inner)
+        top_layout.setContentsMargins(8, 8, 8, 8)
+
         form_group = QGroupBox("回测参数", tab)
         form = QFormLayout(form_group)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.model_combo = QComboBox(form_group)
         self.model_combo.currentIndexChanged.connect(self._sync_backtest_frequency_from_model)
@@ -310,11 +325,33 @@ class TimingStrategyWidget(QWidget):
         form.addRow("方向差阈值", self.margin_spin)
         form.addRow("目标仓位", self.target_percent_spin)
         form.addRow(self.backtest_button)
-        layout.addWidget(form_group)
+        top_layout.addWidget(form_group)
+        top_layout.addStretch(1)
+        top_scroll.setWidget(top_inner)
+        splitter.addWidget(top_scroll)
 
-        self.result_label = QLabel("暂无回测结果", tab)
-        layout.addWidget(self.result_label)
-        layout.addStretch(1)
+        bottom_panel = QWidget(splitter)
+        bottom_layout = QVBoxLayout(bottom_panel)
+        bottom_layout.setContentsMargins(8, 4, 8, 8)
+
+        self.result_label = QLabel("暂无回测结果", bottom_panel)
+        self.result_label.setWordWrap(True)
+        bottom_layout.addWidget(self.result_label)
+
+        self.backtest_chart = pg.GraphicsLayoutWidget(bottom_panel)
+        self.backtest_chart.setMinimumHeight(420)
+        self.backtest_equity_plot = self.backtest_chart.addPlot(row=0, col=0, title="资产曲线 / 收盘价")
+        self.backtest_equity_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.backtest_signal_plot = self.backtest_chart.addPlot(row=1, col=0, title="模型概率与阈值")
+        self.backtest_signal_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.backtest_signal_plot.setYRange(0, 1)
+        self.backtest_position_plot = self.backtest_chart.addPlot(row=2, col=0, title="持仓数量")
+        self.backtest_position_plot.showGrid(x=True, y=True, alpha=0.25)
+        bottom_layout.addWidget(self.backtest_chart, 1)
+        splitter.addWidget(bottom_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([300, 700])
         return tab
 
     def _build_label_viz_tab(self) -> QWidget:
@@ -811,8 +848,111 @@ class TimingStrategyWidget(QWidget):
         final_value = float(result.get("final_value") or 0.0)
         trades = len(result.get("trades") or [])
         text = f"最终资产: {final_value:.2f} | 交易数: {trades} | 指标: {metrics}"
+        diagnostic = self._backtest_diagnostic_text(result)
+        if diagnostic:
+            text = f"{text}\n{diagnostic}"
         self.result_label.setText(text)
         self._log(text)
+        self._refresh_backtest_charts(result)
+
+    def _backtest_diagnostic_text(self, result: dict) -> str:
+        trace = _as_dataframe(result.get("timing_signal_trace"))
+        if trace.empty:
+            return "诊断：本次没有可用的模型预测轨迹，可能是 K 线数量不足 lookback 或推理窗口含 NaN。"
+
+        trades = len(result.get("trades") or [])
+        buy_hits = int(trace.get("buy_threshold_hit", pd.Series(dtype=bool)).fillna(False).sum())
+        sell_hits = int(trace.get("sell_threshold_hit", pd.Series(dtype=bool)).fillna(False).sum())
+        buy_actions = int((trace.get("action", pd.Series(dtype=str)) == "buy").sum())
+        sell_actions = int((trace.get("action", pd.Series(dtype=str)) == "sell").sum())
+        max_up = float(pd.to_numeric(trace.get("p_up"), errors="coerce").max())
+        max_down = float(pd.to_numeric(trace.get("p_down"), errors="coerce").max())
+        if trades == 0 and buy_hits == 0:
+            cause = "主要原因：没有任何 K 线同时满足看多阈值和方向差阈值，所以策略从未建仓。"
+        elif trades == 0 and buy_actions == 0:
+            cause = "主要原因：虽有阈值命中，但未形成可执行买入，可能受已有仓位、允许买入或一手数量限制影响。"
+        elif trades == 0:
+            cause = "主要原因：策略产生过买卖信号，但订单未成交，可查看成交约束、价格区间和资金/一手限制。"
+        else:
+            cause = ""
+        return (
+            f"诊断：预测点 {len(trace)} 个，买阈值命中 {buy_hits} 次，卖阈值命中 {sell_hits} 次，"
+            f"实际买信号 {buy_actions} 次，实际卖信号 {sell_actions} 次，"
+            f"max p_up={max_up:.3f}，max p_down={max_down:.3f}。{cause}"
+        )
+
+    def _refresh_backtest_charts(self, result: dict) -> None:
+        trace = _as_dataframe(result.get("timing_signal_trace"))
+        equity = _as_dataframe(result.get("equity_curve"))
+        for plot in (self.backtest_equity_plot, self.backtest_signal_plot, self.backtest_position_plot):
+            plot.clear()
+            if plot.legend is None:
+                plot.addLegend(offset=(10, 10))
+            else:
+                plot.legend.clear()
+            plot.showGrid(x=True, y=True, alpha=0.25)
+
+        if not equity.empty and {"total_asset", "close"}.issubset(equity.columns):
+            x = np.arange(len(equity), dtype=float)
+            asset = pd.to_numeric(equity["total_asset"], errors="coerce").to_numpy(dtype=float)
+            close = pd.to_numeric(equity["close"], errors="coerce").to_numpy(dtype=float)
+            asset_norm = _normalize_series(asset)
+            close_norm = _normalize_series(close)
+            _plot_finite(self.backtest_equity_plot, x, asset_norm, pen=pg.mkPen("#a3be8c", width=1.5), name="资产(归一化)")
+            _plot_finite(self.backtest_equity_plot, x, close_norm, pen=pg.mkPen("#88c0d0", width=1.2), name="收盘(归一化)")
+            _set_numeric_range(self.backtest_equity_plot, x, np.concatenate([asset_norm, close_norm]))
+
+        if not trace.empty:
+            x = np.arange(len(trace), dtype=float)
+            for column, color, name in (
+                ("p_up", "#a3be8c", "p_up"),
+                ("p_flat", "#ebcb8b", "p_flat"),
+                ("p_down", "#bf616a", "p_down"),
+            ):
+                y = pd.to_numeric(trace.get(column), errors="coerce").to_numpy(dtype=float)
+                _plot_finite(self.backtest_signal_plot, x, y, pen=pg.mkPen(color, width=1.2), name=name)
+
+            up_threshold = pd.to_numeric(trace.get("up_threshold"), errors="coerce").dropna()
+            down_threshold = pd.to_numeric(trace.get("down_threshold"), errors="coerce").dropna()
+            if not up_threshold.empty:
+                y = float(up_threshold.iloc[-1])
+                self.backtest_signal_plot.plot([0, len(trace) - 1], [y, y], pen=pg.mkPen("#a3be8c", style=Qt.PenStyle.DashLine), name="看多阈值")
+            if not down_threshold.empty:
+                y = float(down_threshold.iloc[-1])
+                self.backtest_signal_plot.plot([0, len(trace) - 1], [y, y], pen=pg.mkPen("#bf616a", style=Qt.PenStyle.DashLine), name="看空阈值")
+
+            close = pd.to_numeric(trace.get("close"), errors="coerce").to_numpy(dtype=float)
+            close_norm = _normalize_series(close)
+            marker_x = _trace_x_on_equity(equity, trace)
+            for action, color, symbol, name in (
+                ("buy", "#a3be8c", "t1", "买信号"),
+                ("sell", "#bf616a", "t", "卖信号"),
+            ):
+                mask = (trace.get("action", pd.Series(dtype=str)) == action).to_numpy()
+                idx = np.flatnonzero(mask)
+                if len(idx):
+                    y = close_norm[idx]
+                    x_marker = marker_x[idx] if len(marker_x) == len(trace) else idx.astype(float)
+                    valid = np.isfinite(x_marker) & np.isfinite(y)
+                    if not valid.any():
+                        continue
+                    self.backtest_equity_plot.addItem(
+                        pg.ScatterPlotItem(
+                            x=x_marker[valid].astype(float),
+                            y=y[valid],
+                            size=12,
+                            pen=pg.mkPen(color),
+                            brush=pg.mkBrush(color),
+                            symbol=symbol,
+                            name=name,
+                        )
+                    )
+
+            qty = pd.to_numeric(trace.get("position_qty"), errors="coerce").fillna(0).to_numpy(dtype=float)
+            _plot_finite(self.backtest_position_plot, x, qty, pen=pg.mkPen("#d08770", width=1.2), name="持仓数量")
+            self.backtest_signal_plot.setXRange(0, max(len(trace) - 1, 1), padding=0.01)
+            self.backtest_signal_plot.setYRange(0, 1, padding=0)
+            _set_numeric_range(self.backtest_position_plot, x, qty, y_floor=0.0)
 
     def _on_backtest_error(self, message: str) -> None:
         self.backtest_button.setEnabled(True)
@@ -821,6 +961,72 @@ class TimingStrategyWidget(QWidget):
 
     def _log(self, message: str) -> None:
         self.log_edit.append(message)
+
+
+def _as_dataframe(value) -> pd.DataFrame:
+    if isinstance(value, pd.DataFrame):
+        return value.copy()
+    if isinstance(value, list):
+        return pd.DataFrame(value)
+    return pd.DataFrame()
+
+
+def _normalize_series(values: np.ndarray) -> np.ndarray:
+    data = values.astype(float, copy=True)
+    finite = np.isfinite(data)
+    if not finite.any():
+        return np.zeros_like(data, dtype=float)
+    base = data[finite][0]
+    if not np.isfinite(base) or abs(base) < 1e-12:
+        base = 1.0
+    return data / base
+
+
+def _plot_finite(plot, x: np.ndarray, y: np.ndarray, **kwargs) -> None:
+    mask = np.isfinite(x) & np.isfinite(y)
+    if not mask.any():
+        return
+    plot.plot(x[mask], y[mask], **kwargs)
+
+
+def _set_numeric_range(plot, x: np.ndarray, y: np.ndarray, *, y_floor: float | None = None) -> None:
+    valid_x = x[np.isfinite(x)]
+    valid_y = y[np.isfinite(y)]
+    if len(valid_x) == 0 or len(valid_y) == 0:
+        return
+    x_min = float(valid_x.min())
+    x_max = float(valid_x.max())
+    if x_max <= x_min:
+        x_max = x_min + 1.0
+
+    y_min = float(valid_y.min())
+    y_max = float(valid_y.max())
+    if y_floor is not None:
+        y_min = min(float(y_floor), y_min)
+    if y_max <= y_min:
+        padding = max(abs(y_max) * 0.05, 1.0)
+        y_min -= padding
+        y_max += padding
+    else:
+        padding = max((y_max - y_min) * 0.08, 0.02)
+        y_min -= padding
+        y_max += padding
+
+    plot.setXRange(x_min, x_max, padding=0.01)
+    plot.setYRange(y_min, y_max, padding=0)
+
+
+def _trace_x_on_equity(equity: pd.DataFrame, trace: pd.DataFrame) -> np.ndarray:
+    fallback = np.arange(len(trace), dtype=float)
+    if equity.empty or trace.empty or "date" not in equity.columns or "date" not in trace.columns:
+        return fallback
+    equity_dates = pd.to_datetime(equity["date"], errors="coerce")
+    trace_dates = pd.to_datetime(trace["date"], errors="coerce")
+    if equity_dates.isna().all() or trace_dates.isna().all():
+        return fallback
+    index_by_date = {value: float(index) for index, value in enumerate(equity_dates)}
+    mapped = trace_dates.map(index_by_date).to_numpy(dtype=float)
+    return np.where(np.isfinite(mapped), mapped, fallback)
 
 
 def _parse_symbols(text: str) -> list[str]:
