@@ -218,15 +218,14 @@ class TimingStrategyWidget(QWidget):
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
+        self.log_edit = QTextEdit(self)
+        self.log_edit.setReadOnly(True)
+
         tabs = QTabWidget(self)
         tabs.addTab(self._build_train_tab(), "训练")
         tabs.addTab(self._build_backtest_tab(), "回测")
         tabs.addTab(self._build_label_viz_tab(), "标签可视化")
-        layout.addWidget(tabs, 2)
-
-        self.log_edit = QTextEdit(self)
-        self.log_edit.setReadOnly(True)
-        layout.addWidget(self.log_edit, 1)
+        layout.addWidget(tabs, 1)
 
     def _build_train_tab(self) -> QWidget:
         tab = QWidget(self)
@@ -278,17 +277,23 @@ class TimingStrategyWidget(QWidget):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Orientation.Vertical, tab)
+        splitter = QSplitter(Qt.Orientation.Horizontal, tab)
         splitter.setChildrenCollapsible(False)
         layout.addWidget(splitter, 1)
 
-        top_scroll = QScrollArea(splitter)
-        top_scroll.setWidgetResizable(True)
-        top_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        top_scroll.setMinimumHeight(220)
-        top_inner = QWidget(top_scroll)
-        top_layout = QVBoxLayout(top_inner)
-        top_layout.setContentsMargins(8, 8, 8, 8)
+        left_panel = QWidget(splitter)
+        left_panel.setMinimumWidth(300)
+        left_panel.setMaximumWidth(520)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(8, 8, 6, 8)
+
+        param_scroll = QScrollArea(left_panel)
+        param_scroll.setWidgetResizable(True)
+        param_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        param_scroll.setMinimumHeight(260)
+        param_inner = QWidget(param_scroll)
+        param_layout = QVBoxLayout(param_inner)
+        param_layout.setContentsMargins(0, 0, 0, 0)
 
         form_group = QGroupBox("回测参数", tab)
         form = QFormLayout(form_group)
@@ -325,20 +330,25 @@ class TimingStrategyWidget(QWidget):
         form.addRow("方向差阈值", self.margin_spin)
         form.addRow("目标仓位", self.target_percent_spin)
         form.addRow(self.backtest_button)
-        top_layout.addWidget(form_group)
-        top_layout.addStretch(1)
-        top_scroll.setWidget(top_inner)
-        splitter.addWidget(top_scroll)
+        param_layout.addWidget(form_group)
+        param_layout.addStretch(1)
+        param_scroll.setWidget(param_inner)
+        left_layout.addWidget(param_scroll, 0)
 
-        bottom_panel = QWidget(splitter)
-        bottom_layout = QVBoxLayout(bottom_panel)
-        bottom_layout.setContentsMargins(8, 4, 8, 8)
-
-        self.result_label = QLabel("暂无回测结果", bottom_panel)
+        self.result_label = QLabel("暂无回测结果", left_panel)
         self.result_label.setWordWrap(True)
-        bottom_layout.addWidget(self.result_label)
+        left_layout.addWidget(self.result_label, 0)
 
-        self.backtest_chart = pg.GraphicsLayoutWidget(bottom_panel)
+        self.log_edit.setParent(left_panel)
+        self.log_edit.setMinimumHeight(160)
+        left_layout.addWidget(self.log_edit, 1)
+        splitter.addWidget(left_panel)
+
+        right_panel = QWidget(splitter)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(6, 8, 8, 8)
+
+        self.backtest_chart = pg.GraphicsLayoutWidget(right_panel)
         self.backtest_chart.setMinimumHeight(420)
         self.backtest_equity_plot = self.backtest_chart.addPlot(row=0, col=0, title="资产曲线 / 收盘价")
         self.backtest_equity_plot.showGrid(x=True, y=True, alpha=0.25)
@@ -347,11 +357,11 @@ class TimingStrategyWidget(QWidget):
         self.backtest_signal_plot.setYRange(0, 1)
         self.backtest_position_plot = self.backtest_chart.addPlot(row=2, col=0, title="持仓数量")
         self.backtest_position_plot.showGrid(x=True, y=True, alpha=0.25)
-        bottom_layout.addWidget(self.backtest_chart, 1)
-        splitter.addWidget(bottom_panel)
+        right_layout.addWidget(self.backtest_chart, 1)
+        splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([300, 700])
+        splitter.setSizes([360, 1200])
         return tab
 
     def _build_label_viz_tab(self) -> QWidget:
