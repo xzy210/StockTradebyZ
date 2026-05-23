@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import pickle
 import traceback
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +11,7 @@ import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtCore import QDate, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QDoubleSpinBox,
@@ -41,9 +44,9 @@ from strategy_app.timing import (
     build_triple_barrier_labels,
 )
 from strategy_app.timing.data_loader import load_timing_bars
-from strategy_app.timing.dataset import describe_labels
+from strategy_app.timing.dataset import TimingDataset, describe_labels
 from strategy_app.timing.model import TCNAttentionConfig
-from strategy_app.timing.model_store import save_timing_model
+from strategy_app.timing.model_store import load_scaler, save_timing_model
 from strategy_app.timing.trainer import TimingTrainConfig, train_timing_model
 
 MODEL_FREQUENCY_ROLE = Qt.ItemDataRole.UserRole.value + 1
@@ -60,26 +63,13 @@ class TimingTrainingThread(QThread):
 
     def run(self) -> None:
         try:
-            symbols = self.params["symbols"]
-            data_dir = Path(self.params["data_dir"])
-            frames = []
-            feature_names = []
-            feature_config = TimingFeatureConfig(
-                momentum_windows=tuple(self.params["momentum_windows"]),
-                ma_windows=tuple(self.params["ma_windows"]),
-                volatility_window=self.params["volatility_window"],
-            )
-            label_config = TripleBarrierConfig(
-                horizon=self.params["horizon"],
-                up_mult=self.params["up_mult"],
-                down_mult=self.params["down_mult"],
-                volatility_window=self.params["volatility_window"],
-            )
-            dataset_config = TimingDatasetConfig(
-                lookback=self.params["lookback"],
-                train_ratio=self.params["train_ratio"],
-                val_ratio=self.params["val_ratio"],
-            )
+            dataset_dir = Path(self.params["dataset_dir"])
+            self.info_signal.emit(f"加载已构建数据集: {dataset_dir}")
+            dataset, dataset_summary = _load_timing_dataset_artifact(dataset_dir)
+            feature_names = list(dataset_summary.get("feature_names") or dataset.feature_names)
+            feature_config = TimingFeatureConfig(**_tuple_fields(dataset_summary.get("feature_config") or {}, ("momentum_windows", "ma_windows", "extra_feature_columns")))
+            label_config = TripleBarrierConfig(**(dataset_summary.get("label_config") or {}))
+            dataset_config = TimingDatasetConfig(**(dataset_summary.get("dataset_config") or {}))
             train_config = TimingTrainConfig(
                 epochs=self.params["epochs"],
                 batch_size=self.params["batch_size"],
@@ -87,29 +77,8 @@ class TimingTrainingThread(QThread):
                 weight_decay=self.params["weight_decay"],
                 patience=self.params["patience"],
                 device=self.params["device"],
+                use_class_weight=self.params["use_class_weight"],
             )
-
-            for index, symbol in enumerate(symbols, start=1):
-                self.info_signal.emit(f"加载并处理 {symbol} ({index}/{len(symbols)})")
-                raw = load_timing_bars(
-                    data_dir,
-                    symbol,
-                    frequency=self.params["frequency"],
-                    start_date=self.params["start_date"],
-                    end_date=self.params["end_date"],
-                    auto_fetch=True,
-                    log_callback=self.info_signal.emit,
-                )
-                features, names = build_timing_features(raw, feature_config)
-                labeled = build_triple_barrier_labels(features, label_config)
-                labeled["symbol"] = symbol
-                frames.append(labeled)
-                if not feature_names:
-                    feature_names = names
-
-            all_data = pd.concat(frames, ignore_index=True)
-            self.info_signal.emit("构造滑动窗口样本...")
-            dataset = build_timing_dataset(all_data, feature_names, dataset_config)
             self.info_signal.emit(
                 f"样本集: train={len(dataset.y_train)}, val={len(dataset.y_val)}, test={len(dataset.y_test)}"
             )
@@ -143,13 +112,123 @@ class TimingTrainingThread(QThread):
                 dataset_config=dataset_config,
                 model_config=model_config,
                 train_config=train_config,
-                symbols=symbols,
-                frequency=self.params["frequency"],
-                data_start=self.params["start_date"],
-                data_end=self.params["end_date"],
+                symbols=list(dataset_summary.get("symbols") or []),
+                frequency=str(dataset_summary.get("frequency") or ""),
+                data_start=str(dataset_summary.get("start_date") or ""),
+                data_end=str(dataset_summary.get("end_date") or ""),
                 label_distribution=label_distribution,
+                dataset_artifact={
+                    "dataset_dir": str(dataset_dir),
+                    "dataset_version": dataset_dir.name,
+                    "schema_version": dataset_summary.get("schema_version", ""),
+                },
             )
             self.finished_signal.emit(str(model_dir))
+        except Exception as exc:
+            traceback.print_exc()
+            self.error_signal.emit(str(exc))
+
+
+class TimingDataBuildThread(QThread):
+    info_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(dict)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, params: dict):
+        super().__init__()
+        self.params = params
+
+    def run(self) -> None:
+        try:
+            symbols = self.params["symbols"]
+            data_dir = Path(self.params["data_dir"])
+            frames = []
+            feature_names = []
+            feature_config = TimingFeatureConfig(
+                momentum_windows=tuple(self.params["momentum_windows"]),
+                ma_windows=tuple(self.params["ma_windows"]),
+                volatility_window=self.params["volatility_window"],
+            )
+            label_config = TripleBarrierConfig(
+                horizon=self.params["horizon"],
+                up_mult=self.params["up_mult"],
+                down_mult=self.params["down_mult"],
+                volatility_window=self.params["volatility_window"],
+            )
+            dataset_config = TimingDatasetConfig(
+                lookback=self.params["lookback"],
+                train_ratio=self.params["train_ratio"],
+                val_ratio=self.params["val_ratio"],
+            )
+
+            for index, symbol in enumerate(symbols, start=1):
+                self.info_signal.emit(f"构建数据: 加载并处理 {symbol} ({index}/{len(symbols)})")
+                raw = load_timing_bars(
+                    data_dir,
+                    symbol,
+                    frequency=self.params["frequency"],
+                    start_date=self.params["start_date"],
+                    end_date=self.params["end_date"],
+                    auto_fetch=True,
+                    log_callback=self.info_signal.emit,
+                )
+                features, names = build_timing_features(raw, feature_config)
+                labeled = build_triple_barrier_labels(features, label_config)
+                labeled["symbol"] = symbol
+                frames.append(labeled)
+                if not feature_names:
+                    feature_names = names
+
+            all_data = pd.concat(frames, ignore_index=True)
+            self.info_signal.emit("构造滑动窗口训练数据...")
+            dataset = build_timing_dataset(all_data, feature_names, dataset_config)
+
+            dataset_dir = Path(self.params["output_dir"]) / "datasets" / datetime.now().strftime("%Y%m%d_%H%M%S")
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            all_data.to_parquet(dataset_dir / "labeled_data.parquet", index=False)
+            dataset.metadata.to_parquet(dataset_dir / "metadata.parquet", index=False)
+            with (dataset_dir / "scaler.pkl").open("wb") as file:
+                pickle.dump(dataset.scaler, file)
+            np.savez_compressed(
+                dataset_dir / "dataset.npz",
+                x_train=dataset.x_train,
+                y_train=dataset.y_train,
+                x_val=dataset.x_val,
+                y_val=dataset.y_val,
+                x_test=dataset.x_test,
+                y_test=dataset.y_test,
+            )
+
+            label_distribution = describe_labels(
+                pd.concat(
+                    [
+                        pd.Series(dataset.y_train),
+                        pd.Series(dataset.y_val),
+                        pd.Series(dataset.y_test),
+                    ],
+                    ignore_index=True,
+                ).to_numpy()
+            )
+            split_summary = {
+                "train_samples": int(len(dataset.y_train)),
+                "val_samples": int(len(dataset.y_val)),
+                "test_samples": int(len(dataset.y_test)),
+                "feature_count": int(dataset.num_features),
+                "feature_names": feature_names,
+                "label_distribution": label_distribution,
+                "symbols": symbols,
+                "frequency": self.params["frequency"],
+                "start_date": self.params["start_date"],
+                "end_date": self.params["end_date"],
+                "feature_config": feature_config.to_dict(),
+                "label_config": label_config.to_dict(),
+                "dataset_config": dataset_config.to_dict(),
+                "schema_version": "timing_dataset_artifact.v1",
+            }
+            with (dataset_dir / "summary.json").open("w", encoding="utf-8") as file:
+                json.dump(split_summary, file, ensure_ascii=False, indent=2)
+
+            self.finished_signal.emit({"dataset_dir": str(dataset_dir), **split_summary})
         except Exception as exc:
             traceback.print_exc()
             self.error_signal.emit(str(exc))
@@ -210,10 +289,12 @@ class TimingStrategyWidget(QWidget):
         self.project_root = Path(__file__).resolve().parents[2]
         self.models_dir = self.project_root / "models" / "timing" / "tcn_attention"
         self.training_thread: TimingTrainingThread | None = None
+        self.data_build_thread: TimingDataBuildThread | None = None
         self.backtest_thread: TimingBacktestThread | None = None
         self._last_labeled_df: pd.DataFrame | None = None
         self._barrier_overlay_items: list = []
         self._setup_ui()
+        self.refresh_datasets()
         self.refresh_models()
 
     def _setup_ui(self) -> None:
@@ -222,54 +303,129 @@ class TimingStrategyWidget(QWidget):
         self.log_edit.setReadOnly(True)
 
         tabs = QTabWidget(self)
+        tabs.addTab(self._build_data_build_tab(), "数据构建")
         tabs.addTab(self._build_train_tab(), "训练")
         tabs.addTab(self._build_backtest_tab(), "回测")
         tabs.addTab(self._build_label_viz_tab(), "标签可视化")
         layout.addWidget(tabs, 1)
 
+    def _build_data_build_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea(tab)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner = QWidget(scroll)
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(8, 8, 8, 8)
+
+        data_group = QGroupBox("数据、标签与样本", inner)
+        data_form = QFormLayout(data_group)
+        data_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.train_symbols_edit = QLineEdit("000001", data_group)
+        self.train_frequency_combo = _frequency_combo(data_group)
+        self.train_start_edit = _date_edit(QDate(2024, 1, 1), data_group)
+        self.train_end_edit = _date_edit(QDate.currentDate(), data_group)
+        self.lookback_spin = _spin(2, 1000, 60, data_group)
+        self.horizon_spin = _spin(1, 240, 12, data_group)
+        self.train_volatility_window_spin = _spin(5, 240, 20, data_group)
+        self.train_up_mult_spin = _float_spin(0.1, 10.0, 1.5, data_group, decimals=2, step=0.1)
+        self.train_down_mult_spin = _float_spin(0.1, 10.0, 1.0, data_group, decimals=2, step=0.1)
+        self.train_ratio_spin = _prob_spin(0.7, data_group)
+        self.val_ratio_spin = _prob_spin(0.15, data_group)
+        data_form.addRow("标的代码", self.train_symbols_edit)
+        data_form.addRow("K线周期", self.train_frequency_combo)
+        data_form.addRow("开始日期", self.train_start_edit)
+        data_form.addRow("结束日期", self.train_end_edit)
+        data_form.addRow("lookback", self.lookback_spin)
+        data_form.addRow("horizon", self.horizon_spin)
+        data_form.addRow("波动率窗口", self.train_volatility_window_spin)
+        data_form.addRow("上障碍倍数", self.train_up_mult_spin)
+        data_form.addRow("下障碍倍数", self.train_down_mult_spin)
+        data_form.addRow("训练集比例", self.train_ratio_spin)
+        data_form.addRow("验证集比例", self.val_ratio_spin)
+
+        self.build_data_button = QPushButton("构建数据", data_group)
+        self.build_data_button.setToolTip("生成特征、三障碍标签和训练/验证/测试数据，不训练模型")
+        self.build_data_button.clicked.connect(self.start_data_build)
+        data_form.addRow(self.build_data_button)
+
+        inner_layout.addWidget(data_group)
+        inner_layout.addStretch(1)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
+        return tab
+
     def _build_train_tab(self) -> QWidget:
         tab = QWidget(self)
         layout = QVBoxLayout(tab)
-        form_group = QGroupBox("训练参数", tab)
-        form = QFormLayout(form_group)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        self.train_symbols_edit = QLineEdit("000001", form_group)
-        self.train_frequency_combo = _frequency_combo(form_group)
-        self.train_start_edit = _date_edit(QDate(2024, 1, 1), form_group)
-        self.train_end_edit = _date_edit(QDate.currentDate(), form_group)
-        self.lookback_spin = _spin(2, 1000, 60, form_group)
-        self.horizon_spin = _spin(1, 240, 12, form_group)
-        self.epochs_spin = _spin(1, 500, 10, form_group)
-        self.batch_spin = _spin(8, 2048, 128, form_group)
-        self.learning_rate_spin = _decimal_spin(0.000001, 1.0, 0.001, form_group)
-        self.weight_decay_spin = _decimal_spin(0.0, 1.0, 0.0001, form_group)
-        self.patience_spin = _spin(1, 200, 5, form_group)
-        self.channels_edit = QLineEdit("64,64,64", form_group)
+        scroll = QScrollArea(tab)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        inner = QWidget(scroll)
+        inner_layout = QVBoxLayout(inner)
+        inner_layout.setContentsMargins(8, 8, 8, 8)
+
+        dataset_group = QGroupBox("训练数据集（只读）", inner)
+        dataset_layout = QVBoxLayout(dataset_group)
+        dataset_row = QHBoxLayout()
+        self.dataset_combo = QComboBox(dataset_group)
+        self.dataset_combo.currentIndexChanged.connect(self._on_dataset_selection_changed)
+        refresh_dataset_btn = QPushButton("刷新数据集", dataset_group)
+        refresh_dataset_btn.clicked.connect(self.refresh_datasets)
+        dataset_row.addWidget(self.dataset_combo, 1)
+        dataset_row.addWidget(refresh_dataset_btn)
+        dataset_layout.addLayout(dataset_row)
+
+        self.dataset_summary_edit = QTextEdit(dataset_group)
+        self.dataset_summary_edit.setReadOnly(True)
+        self.dataset_summary_edit.setMinimumHeight(160)
+        self.dataset_summary_edit.setPlaceholderText("请选择或先构建一个数据集。")
+        dataset_layout.addWidget(self.dataset_summary_edit)
+
+        model_group = QGroupBox("模型结构", inner)
+        model_form = QFormLayout(model_group)
+        model_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.channels_edit = QLineEdit("64,64,64", model_group)
         self.channels_edit.setToolTip("TCN 每层通道数，使用英文逗号分隔，例如 64,64,64 或 32,32")
-        self.kernel_size_spin = _spin(1, 15, 3, form_group)
-        self.dropout_spin = _prob_spin(0.2, form_group)
-        self.attention_dim_spin = _spin(1, 1024, 64, form_group)
-        self.train_button = QPushButton("开始训练", form_group)
-        self.train_button.clicked.connect(self.start_training)
+        self.kernel_size_spin = _spin(1, 15, 3, model_group)
+        self.dropout_spin = _prob_spin(0.2, model_group)
+        self.attention_dim_spin = _spin(1, 1024, 64, model_group)
+        model_form.addRow("channels", self.channels_edit)
+        model_form.addRow("kernel size", self.kernel_size_spin)
+        model_form.addRow("dropout", self.dropout_spin)
+        model_form.addRow("attention dim", self.attention_dim_spin)
 
-        form.addRow("标的代码", self.train_symbols_edit)
-        form.addRow("K线周期", self.train_frequency_combo)
-        form.addRow("开始日期", self.train_start_edit)
-        form.addRow("结束日期", self.train_end_edit)
-        form.addRow("lookback", self.lookback_spin)
-        form.addRow("horizon", self.horizon_spin)
-        form.addRow("epochs", self.epochs_spin)
-        form.addRow("batch size", self.batch_spin)
-        form.addRow("learning rate", self.learning_rate_spin)
-        form.addRow("weight decay", self.weight_decay_spin)
-        form.addRow("patience", self.patience_spin)
-        form.addRow("channels", self.channels_edit)
-        form.addRow("kernel size", self.kernel_size_spin)
-        form.addRow("dropout", self.dropout_spin)
-        form.addRow("attention dim", self.attention_dim_spin)
-        form.addRow(self.train_button)
-        layout.addWidget(form_group)
-        layout.addStretch(1)
+        train_group = QGroupBox("训练过程", inner)
+        train_form = QFormLayout(train_group)
+        train_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.epochs_spin = _spin(1, 500, 10, train_group)
+        self.batch_spin = _spin(8, 2048, 128, train_group)
+        self.learning_rate_spin = _decimal_spin(0.000001, 1.0, 0.001, train_group)
+        self.weight_decay_spin = _decimal_spin(0.0, 1.0, 0.0001, train_group)
+        self.patience_spin = _spin(1, 200, 5, train_group)
+        self.use_class_weight_check = QCheckBox("启用类别权重", train_group)
+        self.use_class_weight_check.setChecked(True)
+        self.train_button = QPushButton("开始训练", train_group)
+        self.train_button.clicked.connect(self.start_training)
+        train_form.addRow("epochs", self.epochs_spin)
+        train_form.addRow("batch size", self.batch_spin)
+        train_form.addRow("learning rate", self.learning_rate_spin)
+        train_form.addRow("weight decay", self.weight_decay_spin)
+        train_form.addRow("patience", self.patience_spin)
+        train_form.addRow("类别权重", self.use_class_weight_check)
+        train_form.addRow(self.train_button)
+
+        inner_layout.addWidget(dataset_group)
+        inner_layout.addWidget(model_group)
+        inner_layout.addWidget(train_group)
+        inner_layout.addStretch(1)
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, 1)
         return tab
 
     def _build_backtest_tab(self) -> QWidget:
@@ -592,10 +748,10 @@ class TimingStrategyWidget(QWidget):
         self.viz_start_edit.setDate(self.train_start_edit.date())
         self.viz_end_edit.setDate(self.train_end_edit.date())
         self.viz_horizon_spin.setValue(self.horizon_spin.value())
-        self.viz_vol_spin.setValue(20)
-        self.viz_up_mult_spin.setValue(1.5)
-        self.viz_down_mult_spin.setValue(1.0)
-        self._log("标签可视化：已从训练页同步标的、日期与 horizon。")
+        self.viz_vol_spin.setValue(self.train_volatility_window_spin.value())
+        self.viz_up_mult_spin.setValue(self.train_up_mult_spin.value())
+        self.viz_down_mult_spin.setValue(self.train_down_mult_spin.value())
+        self._log("标签可视化：已从训练页同步标的、日期与标签参数。")
 
     def _refresh_label_chart(self) -> None:
         try:
@@ -744,15 +900,12 @@ class TimingStrategyWidget(QWidget):
         self._log(f"已导出: {export_path}")
         QMessageBox.information(self, "完成", f"已保存\n{export_path}")
 
-    def start_training(self) -> None:
-        if self.training_thread and self.training_thread.isRunning():
-            QMessageBox.warning(self, "训练中", "已有训练任务正在运行")
-            return
-        try:
-            channels = _parse_channels(self.channels_edit.text())
-        except ValueError as exc:
-            QMessageBox.warning(self, "参数错误", str(exc))
-            return
+    def _collect_data_build_params(self) -> dict | None:
+        train_ratio = self.train_ratio_spin.value()
+        val_ratio = self.val_ratio_spin.value()
+        if train_ratio + val_ratio >= 0.95:
+            QMessageBox.warning(self, "参数错误", "训练集比例 + 验证集比例需要小于 0.95，给测试集保留足够样本")
+            return None
         params = {
             "symbols": _parse_symbols(self.train_symbols_edit.text()),
             "data_dir": self.data_dir,
@@ -762,28 +915,70 @@ class TimingStrategyWidget(QWidget):
             "end_date": self.train_end_edit.date().toString("yyyy-MM-dd"),
             "lookback": self.lookback_spin.value(),
             "horizon": self.horizon_spin.value(),
+            "momentum_windows": (3, 5, 15),
+            "ma_windows": (20,),
+            "volatility_window": self.train_volatility_window_spin.value(),
+            "up_mult": self.train_up_mult_spin.value(),
+            "down_mult": self.train_down_mult_spin.value(),
+            "train_ratio": train_ratio,
+            "val_ratio": val_ratio,
+        }
+        if not params["symbols"]:
+            QMessageBox.warning(self, "参数错误", "请至少输入一个标的代码")
+            return None
+        return params
+
+    def _collect_training_params(self) -> dict | None:
+        try:
+            channels = _parse_channels(self.channels_edit.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, "参数错误", str(exc))
+            return None
+        dataset_dir = self.dataset_combo.currentData()
+        if not dataset_dir:
+            QMessageBox.warning(self, "缺少数据集", "请先点击「构建数据」或选择一个已构建数据集")
+            return None
+        return {
+            "dataset_dir": dataset_dir,
+            "output_dir": str(self.models_dir),
             "epochs": self.epochs_spin.value(),
             "batch_size": self.batch_spin.value(),
             "learning_rate": self.learning_rate_spin.value(),
             "weight_decay": self.weight_decay_spin.value(),
             "patience": self.patience_spin.value(),
-            "momentum_windows": (3, 5, 15),
-            "ma_windows": (20,),
-            "volatility_window": 20,
-            "up_mult": 1.5,
-            "down_mult": 1.0,
-            "train_ratio": 0.7,
-            "val_ratio": 0.15,
+            "use_class_weight": self.use_class_weight_check.isChecked(),
             "channels": channels,
             "kernel_size": self.kernel_size_spin.value(),
             "dropout": self.dropout_spin.value(),
             "attention_dim": self.attention_dim_spin.value(),
             "device": "auto",
         }
-        if not params["symbols"]:
-            QMessageBox.warning(self, "参数错误", "请至少输入一个标的代码")
+
+    def start_data_build(self) -> None:
+        if self.data_build_thread and self.data_build_thread.isRunning():
+            QMessageBox.warning(self, "构建中", "已有数据构建任务正在运行")
+            return
+        params = self._collect_data_build_params()
+        if params is None:
+            return
+        self.build_data_button.setEnabled(False)
+        self.train_button.setEnabled(False)
+        self._log("启动时序策略数据构建...")
+        self.data_build_thread = TimingDataBuildThread(params)
+        self.data_build_thread.info_signal.connect(self._log)
+        self.data_build_thread.finished_signal.connect(self._on_data_build_finished)
+        self.data_build_thread.error_signal.connect(self._on_data_build_error)
+        self.data_build_thread.start()
+
+    def start_training(self) -> None:
+        if self.training_thread and self.training_thread.isRunning():
+            QMessageBox.warning(self, "训练中", "已有训练任务正在运行")
+            return
+        params = self._collect_training_params()
+        if params is None:
             return
         self.train_button.setEnabled(False)
+        self.build_data_button.setEnabled(False)
         self._log("启动时序策略训练...")
         self.training_thread = TimingTrainingThread(params)
         self.training_thread.info_signal.connect(self._log)
@@ -836,6 +1031,36 @@ class TimingStrategyWidget(QWidget):
                     self.model_combo.setCurrentIndex(self.model_combo.count() - 1)
         self._sync_backtest_frequency_from_model()
 
+    def refresh_datasets(self, select_path: str | None = None) -> None:
+        current_path = select_path or self.dataset_combo.currentData()
+        self.dataset_combo.clear()
+        datasets_dir = self.models_dir / "datasets"
+        if not datasets_dir.exists():
+            self._on_dataset_selection_changed()
+            return
+        for path in sorted(datasets_dir.iterdir(), reverse=True):
+            if not path.is_dir() or not (path / "summary.json").exists():
+                continue
+            label = _read_dataset_label(path)
+            self.dataset_combo.addItem(label, str(path))
+            if current_path and str(path) == str(current_path):
+                self.dataset_combo.setCurrentIndex(self.dataset_combo.count() - 1)
+        self._on_dataset_selection_changed()
+
+    def _on_dataset_selection_changed(self, *_args) -> None:
+        if not hasattr(self, "dataset_summary_edit"):
+            return
+        dataset_dir = self.dataset_combo.currentData() if hasattr(self, "dataset_combo") else None
+        if not dataset_dir:
+            self.dataset_summary_edit.setPlainText("暂无可用数据集。请先在「数据构建」页生成数据集。")
+            return
+        try:
+            with (Path(dataset_dir) / "summary.json").open("r", encoding="utf-8") as file:
+                summary = json.load(file)
+            self.dataset_summary_edit.setPlainText(_format_dataset_summary(summary, Path(dataset_dir)))
+        except Exception as exc:
+            self.dataset_summary_edit.setPlainText(f"读取数据集摘要失败: {exc}")
+
     def _sync_backtest_frequency_from_model(self, *_args) -> None:
         frequency = self.model_combo.currentData(MODEL_FREQUENCY_ROLE)
         if not frequency:
@@ -844,13 +1069,36 @@ class TimingStrategyWidget(QWidget):
 
     def _on_training_finished(self, model_dir: str) -> None:
         self.train_button.setEnabled(True)
+        self.build_data_button.setEnabled(True)
         self._log(f"训练完成: {model_dir}")
         self.refresh_models()
 
     def _on_training_error(self, message: str) -> None:
         self.train_button.setEnabled(True)
+        self.build_data_button.setEnabled(True)
         self._log(f"训练失败: {message}")
         QMessageBox.critical(self, "训练失败", message)
+
+    def _on_data_build_finished(self, summary: dict) -> None:
+        self.build_data_button.setEnabled(True)
+        self.train_button.setEnabled(True)
+        dataset_dir = str(summary.get("dataset_dir") or "")
+        text = (
+            f"数据构建完成: {dataset_dir}\n"
+            f"样本: train={summary.get('train_samples', 0)}, "
+            f"val={summary.get('val_samples', 0)}, test={summary.get('test_samples', 0)} | "
+            f"特征数={summary.get('feature_count', 0)} | "
+            f"标签分布={summary.get('label_distribution', {})}"
+        )
+        self._log(text)
+        self.refresh_datasets(select_path=dataset_dir)
+        QMessageBox.information(self, "数据构建完成", text)
+
+    def _on_data_build_error(self, message: str) -> None:
+        self.build_data_button.setEnabled(True)
+        self.train_button.setEnabled(True)
+        self._log(f"数据构建失败: {message}")
+        QMessageBox.critical(self, "数据构建失败", message)
 
     def _on_backtest_finished(self, result: dict) -> None:
         self.backtest_button.setEnabled(True)
@@ -1091,6 +1339,94 @@ def _read_model_frequency(model_dir: Path) -> str:
         return ""
 
 
+def _read_dataset_label(dataset_dir: Path) -> str:
+    try:
+        with (dataset_dir / "summary.json").open("r", encoding="utf-8") as file:
+            summary = json.load(file)
+        symbols = ",".join(list(summary.get("symbols") or [])[:3])
+        if len(summary.get("symbols") or []) > 3:
+            symbols += "..."
+        return (
+            f"{dataset_dir.name} [{summary.get('frequency', '')} | {symbols} | "
+            f"L{(summary.get('dataset_config') or {}).get('lookback', '')} | "
+            f"H{(summary.get('label_config') or {}).get('horizon', '')}]"
+        )
+    except Exception:
+        return dataset_dir.name
+
+
+def _format_dataset_summary(summary: dict, dataset_dir: Path) -> str:
+    feature_config = summary.get("feature_config") or {}
+    label_config = summary.get("label_config") or {}
+    dataset_config = summary.get("dataset_config") or {}
+    symbols = ", ".join(summary.get("symbols") or [])
+    lines = [
+        f"数据集目录: {dataset_dir}",
+        f"标的: {symbols}",
+        f"周期: {summary.get('frequency', '')}",
+        f"日期: {summary.get('start_date', '')} ~ {summary.get('end_date', '')}",
+        "",
+        "样本切分:",
+        f"  train={summary.get('train_samples', 0)} | val={summary.get('val_samples', 0)} | test={summary.get('test_samples', 0)}",
+        f"  train_ratio={dataset_config.get('train_ratio', '')} | val_ratio={dataset_config.get('val_ratio', '')}",
+        f"  lookback={dataset_config.get('lookback', '')}",
+        "",
+        "标签参数:",
+        f"  horizon={label_config.get('horizon', '')}",
+        f"  volatility_window={label_config.get('volatility_window', '')}",
+        f"  up_mult={label_config.get('up_mult', '')}",
+        f"  down_mult={label_config.get('down_mult', '')}",
+        "",
+        "特征参数:",
+        f"  feature_count={summary.get('feature_count', 0)}",
+        f"  momentum_windows={feature_config.get('momentum_windows', [])}",
+        f"  ma_windows={feature_config.get('ma_windows', [])}",
+        f"  rsi_window={feature_config.get('rsi_window', '')}",
+        f"  macd=({feature_config.get('macd_fast', '')}, {feature_config.get('macd_slow', '')}, {feature_config.get('macd_signal', '')})",
+        "",
+        f"标签分布: {summary.get('label_distribution', {})}",
+    ]
+    return "\n".join(lines)
+
+
+def _load_timing_dataset_artifact(dataset_dir: Path) -> tuple[TimingDataset, dict]:
+    summary_path = dataset_dir / "summary.json"
+    data_path = dataset_dir / "dataset.npz"
+    metadata_path = dataset_dir / "metadata.parquet"
+    scaler_path = dataset_dir / "scaler.pkl"
+    missing = [str(path) for path in (summary_path, data_path, metadata_path, scaler_path) if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"数据集产物缺少文件: {missing}")
+    with summary_path.open("r", encoding="utf-8") as file:
+        summary = json.load(file)
+    arrays = np.load(data_path)
+    metadata = pd.read_parquet(metadata_path)
+    scaler = load_scaler(scaler_path)
+    dataset_config = TimingDatasetConfig(**(summary.get("dataset_config") or {}))
+    feature_names = list(summary.get("feature_names") or [])
+    dataset = TimingDataset(
+        x_train=arrays["x_train"],
+        y_train=arrays["y_train"],
+        x_val=arrays["x_val"],
+        y_val=arrays["y_val"],
+        x_test=arrays["x_test"],
+        y_test=arrays["y_test"],
+        metadata=metadata,
+        feature_names=feature_names,
+        scaler=scaler,
+        config=dataset_config,
+    )
+    return dataset, summary
+
+
+def _tuple_fields(payload: dict, fields: tuple[str, ...]) -> dict:
+    result = dict(payload or {})
+    for field in fields:
+        if field in result:
+            result[field] = tuple(result[field] or ())
+    return result
+
+
 def _date_edit(value: QDate, parent: QWidget) -> QDateEdit:
     widget = QDateEdit(value, parent)
     widget.setCalendarPopup(True)
@@ -1108,6 +1444,23 @@ def _double_spin(minimum: float, maximum: float, value: float, parent: QWidget) 
     widget = QDoubleSpinBox(parent)
     widget.setRange(minimum, maximum)
     widget.setDecimals(2)
+    widget.setValue(value)
+    return widget
+
+
+def _float_spin(
+    minimum: float,
+    maximum: float,
+    value: float,
+    parent: QWidget,
+    *,
+    decimals: int = 2,
+    step: float = 0.1,
+) -> QDoubleSpinBox:
+    widget = QDoubleSpinBox(parent)
+    widget.setRange(minimum, maximum)
+    widget.setDecimals(decimals)
+    widget.setSingleStep(step)
     widget.setValue(value)
     return widget
 

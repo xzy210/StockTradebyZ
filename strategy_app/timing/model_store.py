@@ -34,6 +34,7 @@ class TimingModelManifest:
     train_config: dict = field(default_factory=dict)
     metrics: dict = field(default_factory=dict)
     label_distribution: dict = field(default_factory=dict)
+    dataset_artifact: dict = field(default_factory=dict)
     schema_version: str = "timing_model_manifest.v1"
 
     def to_dict(self) -> dict:
@@ -56,6 +57,7 @@ def save_timing_model(
     data_start: str = "",
     data_end: str = "",
     label_distribution: dict | None = None,
+    dataset_artifact: dict | None = None,
 ) -> Path:
     """保存模型权重、scaler、配置和训练指标。"""
 
@@ -89,6 +91,7 @@ def save_timing_model(
         train_config=train_config.to_dict(),
         metrics=train_result.metrics,
         label_distribution=dict(label_distribution or {}),
+        dataset_artifact=dict(dataset_artifact or {}),
     )
     _write_json(version_dir / "manifest.json", manifest.to_dict())
     return version_dir
