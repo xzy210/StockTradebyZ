@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -54,6 +55,7 @@ MODEL_FREQUENCY_ROLE = Qt.ItemDataRole.UserRole.value + 1
 
 class TimingTrainingThread(QThread):
     info_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(int, int, dict)
     finished_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)
 
@@ -91,7 +93,12 @@ class TimingTrainingThread(QThread):
                 attention_dim=self.params["attention_dim"],
             )
             self.info_signal.emit("开始训练 TCN + Attention 模型...")
-            result = train_timing_model(dataset, model_config, train_config)
+            result = train_timing_model(
+                dataset,
+                model_config,
+                train_config,
+                progress_callback=lambda current, total, row: self.progress_signal.emit(current, total, row),
+            )
             label_distribution = describe_labels(
                 pd.concat(
                     [
@@ -293,6 +300,7 @@ class TimingStrategyWidget(QWidget):
         self.backtest_thread: TimingBacktestThread | None = None
         self._last_labeled_df: pd.DataFrame | None = None
         self._barrier_overlay_items: list = []
+        self._training_history: list[dict] = []
         self._setup_ui()
         self.refresh_datasets()
         self.refresh_models()
@@ -363,7 +371,11 @@ class TimingStrategyWidget(QWidget):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        scroll = QScrollArea(tab)
+        splitter = QSplitter(Qt.Orientation.Horizontal, tab)
+        splitter.setChildrenCollapsible(False)
+        layout.addWidget(splitter, 1)
+
+        scroll = QScrollArea(splitter)
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         inner = QWidget(scroll)
@@ -425,7 +437,31 @@ class TimingStrategyWidget(QWidget):
         inner_layout.addWidget(train_group)
         inner_layout.addStretch(1)
         scroll.setWidget(inner)
-        layout.addWidget(scroll, 1)
+        splitter.addWidget(scroll)
+
+        right_panel = QWidget(splitter)
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(8, 8, 8, 8)
+        progress_group = QGroupBox("训练进度与曲线", right_panel)
+        progress_layout = QVBoxLayout(progress_group)
+        self.train_progress_bar = QProgressBar(progress_group)
+        self.train_progress_bar.setRange(0, 100)
+        self.train_progress_bar.setValue(0)
+        self.train_progress_bar.setFormat("等待训练")
+        progress_layout.addWidget(self.train_progress_bar)
+
+        self.train_chart = pg.GraphicsLayoutWidget(progress_group)
+        self.train_chart.setMinimumHeight(420)
+        self.train_loss_plot = self.train_chart.addPlot(row=0, col=0, title="Loss 曲线")
+        self.train_loss_plot.showGrid(x=True, y=True, alpha=0.25)
+        self.train_accuracy_plot = self.train_chart.addPlot(row=1, col=0, title="Accuracy 曲线")
+        self.train_accuracy_plot.showGrid(x=True, y=True, alpha=0.25)
+        progress_layout.addWidget(self.train_chart, 1)
+        right_layout.addWidget(progress_group, 1)
+        splitter.addWidget(right_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 1000])
         return tab
 
     def _build_backtest_tab(self) -> QWidget:
@@ -979,9 +1015,15 @@ class TimingStrategyWidget(QWidget):
             return
         self.train_button.setEnabled(False)
         self.build_data_button.setEnabled(False)
+        self._training_history = []
+        self.train_progress_bar.setRange(0, int(params.get("epochs") or 1))
+        self.train_progress_bar.setValue(0)
+        self.train_progress_bar.setFormat("训练中: 0/%m")
+        self._refresh_training_charts(self._training_history)
         self._log("启动时序策略训练...")
         self.training_thread = TimingTrainingThread(params)
         self.training_thread.info_signal.connect(self._log)
+        self.training_thread.progress_signal.connect(self._on_training_progress)
         self.training_thread.finished_signal.connect(self._on_training_finished)
         self.training_thread.error_signal.connect(self._on_training_error)
         self.training_thread.start()
@@ -1071,13 +1113,74 @@ class TimingStrategyWidget(QWidget):
         self.train_button.setEnabled(True)
         self.build_data_button.setEnabled(True)
         self._log(f"训练完成: {model_dir}")
+        history_path = Path(model_dir) / "history.json"
+        if history_path.exists():
+            try:
+                with history_path.open("r", encoding="utf-8") as file:
+                    self._training_history = list(json.load(file) or [])
+                self._refresh_training_charts(self._training_history)
+                self.train_progress_bar.setRange(0, max(len(self._training_history), 1))
+                self.train_progress_bar.setValue(len(self._training_history))
+                self.train_progress_bar.setFormat(f"训练完成: {len(self._training_history)}轮")
+            except Exception as exc:
+                self._log(f"读取训练曲线失败: {exc}")
         self.refresh_models()
 
     def _on_training_error(self, message: str) -> None:
         self.train_button.setEnabled(True)
         self.build_data_button.setEnabled(True)
+        self.train_progress_bar.setFormat("训练失败")
         self._log(f"训练失败: {message}")
         QMessageBox.critical(self, "训练失败", message)
+
+    def _on_training_progress(self, current: int, total: int, row: dict) -> None:
+        self.train_progress_bar.setRange(0, max(int(total or 1), 1))
+        self.train_progress_bar.setValue(int(current or 0))
+        self.train_progress_bar.setFormat(f"训练中: {int(current or 0)}/{int(total or 0)}")
+        self._training_history.append(dict(row or {}))
+        self._refresh_training_charts(self._training_history)
+
+    def _refresh_training_charts(self, history: list[dict]) -> None:
+        if not hasattr(self, "train_loss_plot") or not hasattr(self, "train_accuracy_plot"):
+            return
+        for plot in (self.train_loss_plot, self.train_accuracy_plot):
+            plot.clear()
+            if plot.legend is None:
+                plot.addLegend(offset=(10, 10))
+            else:
+                plot.legend.clear()
+            plot.showGrid(x=True, y=True, alpha=0.25)
+
+        frame = pd.DataFrame(history or [])
+        if frame.empty or "epoch" not in frame.columns:
+            return
+        x = pd.to_numeric(frame["epoch"], errors="coerce").to_numpy(dtype=float)
+        loss_values = []
+        for column, color, name in (
+            ("train_loss", "#88c0d0", "train loss"),
+            ("val_loss", "#bf616a", "val loss"),
+        ):
+            if column not in frame.columns:
+                continue
+            y = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+            loss_values.append(y)
+            _plot_finite(self.train_loss_plot, x, y, pen=pg.mkPen(color, width=1.3), name=name)
+        if loss_values:
+            _set_numeric_range(self.train_loss_plot, x, np.concatenate(loss_values), y_floor=0.0)
+
+        acc_values = []
+        for column, color, name in (
+            ("train_accuracy", "#a3be8c", "train accuracy"),
+            ("val_accuracy", "#ebcb8b", "val accuracy"),
+        ):
+            if column not in frame.columns:
+                continue
+            y = pd.to_numeric(frame[column], errors="coerce").to_numpy(dtype=float)
+            acc_values.append(y)
+            _plot_finite(self.train_accuracy_plot, x, y, pen=pg.mkPen(color, width=1.3), name=name)
+        if acc_values:
+            self.train_accuracy_plot.setXRange(float(np.nanmin(x)), float(np.nanmax(x)) if len(x) > 1 else float(np.nanmin(x)) + 1, padding=0.01)
+            self.train_accuracy_plot.setYRange(0, 1, padding=0)
 
     def _on_data_build_finished(self, summary: dict) -> None:
         self.build_data_button.setEnabled(True)

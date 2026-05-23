@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from typing import Dict
+from typing import Callable, Dict
 
 import numpy as np
 import torch
@@ -41,6 +41,7 @@ def train_timing_model(
     dataset: TimingDataset,
     model_config: TCNAttentionConfig,
     train_config: TimingTrainConfig | None = None,
+    progress_callback: Callable[[int, int, dict], None] | None = None,
 ) -> TimingTrainResult:
     """训练 TCN + Attention 三分类模型。"""
 
@@ -71,6 +72,8 @@ def train_timing_model(
             "val_accuracy": val_acc,
         }
         history.append(row)
+        if progress_callback is not None:
+            progress_callback(epoch, cfg.epochs, dict(row))
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
