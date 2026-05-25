@@ -729,8 +729,15 @@ class StrategyBudgetService:
                 market_value = round(quantity * current_price, 2)
                 has_live_price = True
             elif normalized in live_map and live_map[normalized]["market_value"] > 0:
-                market_value = round(float(live_map[normalized]["market_value"]), 2)
-                current_price = round(market_value / quantity, 4) if quantity > 0 else 0.0
+                live_entry = live_map[normalized]
+                live_market_value = float(live_entry.get("market_value", 0.0) or 0.0)
+                live_volume = int(live_entry.get("volume", 0) or 0)
+                if live_volume > 0:
+                    current_price = round(live_market_value / live_volume, 4)
+                    market_value = round(quantity * current_price, 2)
+                else:
+                    market_value = round(live_market_value, 2)
+                    current_price = round(market_value / quantity, 4) if quantity > 0 else 0.0
                 has_live_price = True
             else:
                 current_price = avg_cost
@@ -809,6 +816,7 @@ class StrategyBudgetService:
             real_total_asset=real_total_asset,
         )
         cfg = self._configs.get(strategy_id)
+        is_unmanaged = bool(getattr(cfg, "is_unmanaged", False))
 
         invested_cost = round(state.invested_market_value(), 2)
         realized_pnl = round(float(state.realized_pnl or 0.0), 2)
@@ -833,7 +841,7 @@ class StrategyBudgetService:
                     sum(float(r.get("market_value", 0.0) or 0.0) for r in positions_view),
                     2,
                 )
-            elif live_positions:
+            elif live_positions and not is_unmanaged:
                 # 主账本尚未记录对应持仓（例如 AI 首次接管前手动持有的股票），
                 # 退化为直接按 live_positions 的 market_value 求和，保证不低估
                 market_value = round(
@@ -847,7 +855,7 @@ class StrategyBudgetService:
 
         if cash_override is not None:
             available_cash = round(float(cash_override or 0.0), 2)
-        elif bool(getattr(cfg, "is_unmanaged", False)):
+        elif is_unmanaged:
             # 未管理账户的现金来自券商对账（cash_balance 即真实券商里未认领的余额），
             # 不适用 "capital_limit + realized_pnl - invested_cost" 的启动资金公式。
             available_cash = round(
@@ -881,7 +889,7 @@ class StrategyBudgetService:
             "enabled": bool(getattr(cfg, "enabled", True)),
             "is_test": bool(getattr(cfg, "is_test", False)),
             "hidden": bool(getattr(cfg, "hidden", False)),
-            "is_unmanaged": bool(getattr(cfg, "is_unmanaged", False)),
+            "is_unmanaged": is_unmanaged,
         }
 
     def get_available_budget(
