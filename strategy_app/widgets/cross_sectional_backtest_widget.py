@@ -1118,8 +1118,12 @@ class CrossSectionalBacktestWidget(QWidget):
         self.backtest_result = result
         
         # 1. 绘制曲线
-        equity_df = result['equity_curve']
+        equity_df = result.get('equity_curve', pd.DataFrame())
         if not equity_df.empty:
+            self.chart_widget.clear()
+            self.chart_widget.addItem(self.replay_line)
+            self.replay_line.setVisible(False)
+
             # 统一日期格式为 YYYY-MM-DD 字符串
             def normalize_date(d):
                 """将各种日期格式统一转换为 YYYY-MM-DD 字符串"""
@@ -1132,14 +1136,25 @@ class CrossSectionalBacktestWidget(QWidget):
                     return str(d).split(' ')[0].split('T')[0]
             
             dates = [normalize_date(d) for d in equity_df['date']]
+            y_series = pd.to_numeric(equity_df['total_asset'], errors='coerce')
+            valid_mask = y_series.notna() & np.isfinite(y_series.to_numpy(dtype=float, na_value=np.nan))
+            x = np.arange(len(equity_df), dtype=float)
+            y = y_series.to_numpy(dtype=float, na_value=np.nan)
             
-            x = range(len(equity_df))
-            y = equity_df['total_asset'].values
-            
-            self.chart_widget.plot(x, y, pen=pg.mkPen('b', width=2), name="策略收益")
+            if valid_mask.any():
+                self.chart_widget.plot(
+                    x[valid_mask.to_numpy()],
+                    y[valid_mask.to_numpy()],
+                    pen=pg.mkPen('#00BFFF', width=2),
+                    name="策略收益"
+                )
+            else:
+                self.chart_widget.setTitle("资金曲线无有效总资产数据", color="#ffcc00")
             
             # 绘制基准收益曲线
             self._plot_benchmark_curve(equity_df, dates)
+            self.chart_widget.enableAutoRange(axis='xy', enable=True)
+            self.chart_widget.autoRange()
             
             ax = self.chart_widget.getAxis('bottom')
             
