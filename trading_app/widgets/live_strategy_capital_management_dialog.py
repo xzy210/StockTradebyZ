@@ -50,7 +50,7 @@ class LiveStrategyCapitalManagementDialog(QDialog):
 
         hint = QLabel(
             "这里维护实盘收益使用的实盘策略启动资金口径。\n"
-            "勾选“同步重置账本”后，会把该策略主账本现金校正到新的启动资金，但保留当前持仓。"
+            "未勾选“同步重置账本”时按新旧启动资金差额划拨现金；勾选后会把该策略主账本现金校正到新的启动资金，但保留当前持仓。"
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color:#94A3B8;font-size:11px;")
@@ -101,7 +101,7 @@ class LiveStrategyCapitalManagementDialog(QDialog):
         form.addRow("启动资金:", spin)
 
         reset_cb = QCheckBox("保存时同步重置账本现金")
-        reset_cb.setToolTip("用于手动校正账本偏差；会保留当前持仓，仅重算现金与资金上限。")
+        reset_cb.setToolTip("不勾选时按差额划拨现金；勾选时用于手动校正账本偏差，会保留当前持仓，仅重算现金与资金上限。")
         form.addRow("", reset_cb)
 
         status = QLabel("-")
@@ -158,6 +158,13 @@ class LiveStrategyCapitalManagementDialog(QDialog):
                 cash_balance=capital_limit,
                 preserve_positions=True,
             )
+        else:
+            self.strategy_budget.adjust_strategy_capital_limit(
+                strategy_id=AI_STOCK_STRATEGY_ID,
+                strategy_name=AI_STOCK_STRATEGY_NAME,
+                virtual_account_id=AI_STOCK_VIRTUAL_ACCOUNT_ID,
+                new_capital_limit=capital_limit,
+            )
 
     def _apply_etf_capital(self, capital_limit: float, *, reset_ledger: bool) -> None:
         if self.etf_panel is None:
@@ -176,6 +183,13 @@ class LiveStrategyCapitalManagementDialog(QDialog):
                 capital_limit=capital_limit,
                 cash_balance=capital_limit,
                 preserve_positions=True,
+            )
+        else:
+            self.strategy_budget.adjust_strategy_capital_limit(
+                strategy_id=strategy_id,
+                strategy_name=strategy_name,
+                virtual_account_id=virtual_account_id,
+                new_capital_limit=capital_limit,
             )
         try:
             self.etf_panel._refresh_status()  # noqa: SLF001

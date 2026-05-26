@@ -1314,6 +1314,75 @@ class StrategyBudgetService:
         state.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._save_states()
 
+    def adjust_strategy_capital_limit(
+        self,
+        *,
+        strategy_id: str,
+        new_capital_limit: float,
+        strategy_name: str = "",
+        virtual_account_id: str = "",
+    ) -> dict:
+        """按新旧启动资金差额划拨现金，保留持仓、盈亏和冻结记录。
+
+        用于实盘资金管理里的非重置修改：例如 ETF 从 1 万调到 3 万，
+        主账本应同步表现为 capital_limit +2 万、cash_balance +2 万。
+        unmanaged 账户会在下一次券商对账时自动少吸收这部分现金。
+        """
+        strategy_id = (strategy_id or "").strip()
+        if not strategy_id:
+            raise ValueError("strategy_id 不能为空")
+        new_capital = round(float(new_capital_limit or 0.0), 2)
+        state = self._ensure_strategy(
+            strategy_id,
+            strategy_name=strategy_name,
+            virtual_account_id=virtual_account_id,
+            real_total_asset=0.0,
+        )
+        state = self._rehydrate_from_trade_records_if_needed(
+            state,
+            strategy_name=strategy_name,
+            virtual_account_id=virtual_account_id,
+            real_total_asset=0.0,
+        )
+        old_capital = round(float(state.capital_limit or 0.0), 2)
+        delta = round(new_capital - old_capital, 2)
+        if abs(delta) < 0.01:
+            return {
+                "strategy_id": strategy_id,
+                "old_capital_limit": old_capital,
+                "new_capital_limit": new_capital,
+                "delta": 0.0,
+                "cash_balance": round(float(state.cash_balance or 0.0), 2),
+            }
+
+        if delta < 0:
+            available_cash = round(
+                max(float(state.cash_balance or 0.0) - float(state.reserved_cash or 0.0), 0.0),
+                2,
+            )
+            if available_cash + 1e-6 < abs(delta):
+                raise ValueError(
+                    f"策略可划出现金不足，需 {abs(delta):,.2f}，可用 {available_cash:,.2f}"
+                )
+
+        self.upsert_strategy_config(
+            strategy_id=strategy_id,
+            strategy_name=strategy_name,
+            virtual_account_id=virtual_account_id,
+            capital_limit=new_capital,
+        )
+        state.capital_limit = new_capital
+        state.cash_balance = round(float(state.cash_balance or 0.0) + delta, 2)
+        state.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._save_states()
+        return {
+            "strategy_id": strategy_id,
+            "old_capital_limit": old_capital,
+            "new_capital_limit": new_capital,
+            "delta": delta,
+            "cash_balance": round(float(state.cash_balance or 0.0), 2),
+        }
+
     def reserve_cash(
         self,
         *,
