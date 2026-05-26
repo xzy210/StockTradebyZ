@@ -275,6 +275,8 @@ class CrossSectionalBacktestWidget(QWidget):
         self.stock_name_map = {}
         self.normalized_dates = []  # 归一化后的日期列表
         self.xgb_default_params = self._load_strategy_default_params("xgboost_cross_sectional")
+        self._benchmark_user_modified = False
+        self._updating_benchmark_from_pool = False
         
         self.setupUI()
         self.load_names()
@@ -329,6 +331,52 @@ class CrossSectionalBacktestWidget(QWidget):
         stock_codes = self._get_selected_pool_codes()
         count = len(stock_codes) if stock_codes else 0
         self.pool_count_label.setText(f"{count}只")
+        self._apply_recommended_benchmark_for_pool()
+
+    @staticmethod
+    def _recommended_benchmark_for_pool_name(pool_name: str) -> str | None:
+        """Return the preferred benchmark index code for a known stock pool."""
+        name = str(pool_name or "")
+        mapping = [
+            ("上证50", "000016"),
+            ("沪深300", "000300"),
+            ("中证500", "000905"),
+            ("中证1000", "000852"),
+            ("创业板", "399006"),
+            ("科创", "000688"),
+            ("上证A股", "000001"),
+            ("深证A股", "399001"),
+            ("沪深A股", "000300"),
+            ("全部股票", "000300"),
+        ]
+        for keyword, benchmark_code in mapping:
+            if keyword in name:
+                return benchmark_code
+        return None
+
+    def _set_benchmark_by_code(self, benchmark_code: str | None) -> bool:
+        if not hasattr(self, "benchmark_combo"):
+            return False
+        for i in range(self.benchmark_combo.count()):
+            if self.benchmark_combo.itemData(i) == benchmark_code:
+                self._updating_benchmark_from_pool = True
+                self.benchmark_combo.setCurrentIndex(i)
+                self._updating_benchmark_from_pool = False
+                return True
+        return False
+
+    def _apply_recommended_benchmark_for_pool(self):
+        if self._benchmark_user_modified or not hasattr(self, "benchmark_combo"):
+            return
+        pool_name = self.pool_combo.currentText() if hasattr(self, "pool_combo") else ""
+        benchmark_code = self._recommended_benchmark_for_pool_name(pool_name)
+        if benchmark_code:
+            self._set_benchmark_by_code(benchmark_code)
+
+    def _on_benchmark_changed(self):
+        if self._updating_benchmark_from_pool:
+            return
+        self._benchmark_user_modified = True
     
     def _get_selected_pool_codes(self):
         """Get stock codes from the selected pool file"""
@@ -868,11 +916,9 @@ class CrossSectionalBacktestWidget(QWidget):
         self.benchmark_combo.addItem("无", None)
         for idx_info in get_data_portal().list_assets(asset_type="index", include_status=False):
             self.benchmark_combo.addItem(idx_info["name"], idx_info["code"])
-        # 默认选择沪深300
-        for i in range(self.benchmark_combo.count()):
-            if self.benchmark_combo.itemData(i) == "000300":
-                self.benchmark_combo.setCurrentIndex(i)
-                break
+        self._set_benchmark_by_code("000300")
+        self._apply_recommended_benchmark_for_pool()
+        self.benchmark_combo.currentIndexChanged.connect(self._on_benchmark_changed)
         benchmark_layout.addWidget(self.benchmark_combo)
         left_layout.addWidget(benchmark_group)
         
