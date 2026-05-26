@@ -85,6 +85,8 @@ from .preprocessor import (
     NeutralizeMethod,
 )
 
+from .analysis import FactorAnalysisService, FactorPanelBuilder, FactorPanelBuildResult
+
 __all__ = [
     # Registry
     'FactorRegistry',
@@ -107,4 +109,8 @@ __all__ = [
     'WinsorizeMethod',
     'StandardizeMethod',
     'NeutralizeMethod',
+    # Analysis
+    'FactorAnalysisService',
+    'FactorPanelBuilder',
+    'FactorPanelBuildResult',
 ]

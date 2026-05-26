@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QLabel, QHeaderView,
     QSplitter, QGroupBox, QDateEdit, QMessageBox, QTabWidget,
     QTreeWidget, QTreeWidgetItem, QTextEdit, QCheckBox, QScrollArea,
-    QFrame, QGridLayout, QLineEdit, QProgressBar, QFileDialog, QApplication
+    QFrame, QGridLayout, QLineEdit, QProgressBar, QFileDialog, QApplication,
+    QSpinBox
 )
 from PyQt6.QtGui import QAction, QColor, QBrush, QFont
 from PyQt6.QtCore import Qt, QDate, QThread, pyqtSignal
@@ -30,11 +31,13 @@ try:
     from factors.registry import FactorRegistry
     from factors.financial_data import FinancialDataLoader
     from factors.preprocessor import FactorPreprocessor, PreprocessConfig
+    from factors.analysis import FactorAnalysisService, FactorPanelBuilder
 except ImportError:
     from strategy_app.factors import factor_registry
     from strategy_app.factors.registry import FactorRegistry
     from strategy_app.factors.financial_data import FinancialDataLoader
     from strategy_app.factors.preprocessor import FactorPreprocessor, PreprocessConfig
+    from strategy_app.factors.analysis import FactorAnalysisService, FactorPanelBuilder
 
 from common.data_portal import get_data_portal
 
@@ -118,6 +121,67 @@ class BatchFactorComputeThread(QThread):
             self.error_signal.emit(f"因子批量计算错误: {str(e)}")
 
 
+class FactorAnalysisThread(QThread):
+    """Background thread for native factor effectiveness analysis."""
+
+    finished_signal = pyqtSignal(dict)
+    error_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(int, int, str)
+
+    def __init__(
+        self,
+        stock_codes,
+        data_dir,
+        factors_dir,
+        factor_name,
+        start_date,
+        end_date,
+        forward_period,
+        quantiles,
+    ):
+        super().__init__()
+        self.stock_codes = stock_codes
+        self.data_dir = data_dir
+        self.factors_dir = factors_dir
+        self.factor_name = factor_name
+        self.start_date = start_date
+        self.end_date = end_date
+        self.forward_period = forward_period
+        self.quantiles = quantiles
+
+    def run(self):
+        try:
+            builder = FactorPanelBuilder(self.data_dir, self.factors_dir)
+            build_result = builder.build_panel(
+                self.stock_codes,
+                [self.factor_name],
+                start_date=self.start_date,
+                end_date=self.end_date,
+                progress_callback=lambda current, total, code: self.progress_signal.emit(current, total, code),
+            )
+            if build_result.panel.empty:
+                self.error_signal.emit("未能构建有效因子面板，请检查原始因子文件和行情数据")
+                return
+
+            service = FactorAnalysisService()
+            result = service.analyze(
+                build_result.panel,
+                self.factor_name,
+                forward_period=self.forward_period,
+                quantiles=self.quantiles,
+            )
+            result["build"] = {
+                "success_count": build_result.success_count,
+                "fail_count": build_result.fail_count,
+                "missing_codes": build_result.missing_codes[:20],
+            }
+            self.finished_signal.emit(result)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error_signal.emit(f"因子有效性分析失败: {str(e)}")
+
+
 class FactorLibraryWidget(QWidget):
     """Factor Library main interface"""
 
@@ -127,6 +191,7 @@ class FactorLibraryWidget(QWidget):
         self.stocklist_path = stocklist_path
         self.tushare_token = tushare_token
         self.batch_compute_thread = None
+        self.factor_analysis_thread = None
         self.stock_list = []
         self.name_map = {}
         self.current_df = None
@@ -345,9 +410,119 @@ class FactorLibraryWidget(QWidget):
         preprocess_tab = self.create_preprocess_tab()
         self.result_tabs.addTab(preprocess_tab, "单股时序预处理（研究用）")
 
+        # Tab 6: Factor Effectiveness Analysis
+        analysis_tab = self.create_factor_analysis_tab()
+        self.result_tabs.addTab(analysis_tab, "因子有效性分析")
+
         right_layout.addWidget(self.result_tabs)
 
         return right_widget
+
+    def create_factor_analysis_tab(self):
+        """Create native factor effectiveness analysis tab."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        config_group = QGroupBox("分析配置")
+        config_grid = QGridLayout(config_group)
+
+        config_grid.addWidget(QLabel("后端:"), 0, 0)
+        self.analysis_backend_combo = QComboBox()
+        self.analysis_backend_combo.addItem("Native（内置）", "native")
+        config_grid.addWidget(self.analysis_backend_combo, 0, 1)
+
+        config_grid.addWidget(QLabel("因子:"), 0, 2)
+        self.analysis_factor_combo = QComboBox()
+        self.analysis_factor_combo.setToolTip("点击刷新会读取左侧已勾选因子")
+        config_grid.addWidget(self.analysis_factor_combo, 0, 3)
+
+        self.refresh_analysis_factors_btn = QPushButton("刷新已选因子")
+        self.refresh_analysis_factors_btn.clicked.connect(self.refresh_analysis_factor_combo)
+        config_grid.addWidget(self.refresh_analysis_factors_btn, 0, 4)
+
+        config_grid.addWidget(QLabel("原始因子目录:"), 1, 0)
+        self.analysis_factor_dir_edit = QLineEdit(os.path.join(self.data_dir, "factors"))
+        config_grid.addWidget(self.analysis_factor_dir_edit, 1, 1, 1, 3)
+
+        self.analysis_factor_dir_btn = QPushButton("选择")
+        self.analysis_factor_dir_btn.clicked.connect(self.browse_analysis_factor_dir)
+        config_grid.addWidget(self.analysis_factor_dir_btn, 1, 4)
+
+        config_grid.addWidget(QLabel("起始:"), 2, 0)
+        self.analysis_start_date_edit = QDateEdit()
+        self.analysis_start_date_edit.setCalendarPopup(True)
+        self.analysis_start_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.analysis_start_date_edit.setDate(QDate.currentDate().addYears(-1))
+        config_grid.addWidget(self.analysis_start_date_edit, 2, 1)
+
+        config_grid.addWidget(QLabel("结束:"), 2, 2)
+        self.analysis_end_date_edit = QDateEdit()
+        self.analysis_end_date_edit.setCalendarPopup(True)
+        self.analysis_end_date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.analysis_end_date_edit.setDate(QDate.currentDate())
+        config_grid.addWidget(self.analysis_end_date_edit, 2, 3)
+
+        config_grid.addWidget(QLabel("未来收益:"), 3, 0)
+        self.analysis_forward_spin = QSpinBox()
+        self.analysis_forward_spin.setRange(1, 120)
+        self.analysis_forward_spin.setValue(5)
+        self.analysis_forward_spin.setSuffix("日")
+        config_grid.addWidget(self.analysis_forward_spin, 3, 1)
+
+        config_grid.addWidget(QLabel("分组数:"), 3, 2)
+        self.analysis_quantile_spin = QSpinBox()
+        self.analysis_quantile_spin.setRange(2, 10)
+        self.analysis_quantile_spin.setValue(5)
+        config_grid.addWidget(self.analysis_quantile_spin, 3, 3)
+
+        self.run_analysis_btn = QPushButton("运行因子有效性分析")
+        self.run_analysis_btn.setProperty("class", "primary")
+        self.run_analysis_btn.clicked.connect(self.run_factor_analysis)
+        config_grid.addWidget(self.run_analysis_btn, 3, 4)
+
+        layout.addWidget(config_group)
+
+        self.analysis_progress_bar = QProgressBar()
+        self.analysis_progress_bar.setVisible(False)
+        layout.addWidget(self.analysis_progress_bar)
+
+        self.analysis_status_label = QLabel("选择左侧因子并点击刷新后开始分析")
+        self.analysis_status_label.setWordWrap(True)
+        layout.addWidget(self.analysis_status_label)
+
+        result_splitter = QSplitter(Qt.Orientation.Vertical)
+
+        self.analysis_summary_label = QLabel("暂无分析结果")
+        self.analysis_summary_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.analysis_summary_label.setStyleSheet("font-family: Consolas, monospace; padding: 8px;")
+        result_splitter.addWidget(self.analysis_summary_label)
+
+        table_container = QWidget()
+        table_layout = QHBoxLayout(table_container)
+
+        self.analysis_ic_table = QTableWidget()
+        self.analysis_ic_table.setColumnCount(4)
+        self.analysis_ic_table.setHorizontalHeaderLabels(["日期", "IC", "Rank IC", "样本数"])
+        self.analysis_ic_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table_layout.addWidget(self.analysis_ic_table)
+
+        self.analysis_quantile_table = QTableWidget()
+        self.analysis_quantile_table.setColumnCount(4)
+        self.analysis_quantile_table.setHorizontalHeaderLabels(["分组", "平均收益", "波动", "样本日数"])
+        self.analysis_quantile_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table_layout.addWidget(self.analysis_quantile_table)
+
+        self.analysis_long_short_table = QTableWidget()
+        self.analysis_long_short_table.setColumnCount(4)
+        self.analysis_long_short_table.setHorizontalHeaderLabels(["日期", "多头", "空头", "多空"])
+        self.analysis_long_short_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        table_layout.addWidget(self.analysis_long_short_table)
+
+        result_splitter.addWidget(table_container)
+        result_splitter.setSizes([160, 520])
+        layout.addWidget(result_splitter)
+
+        return widget
 
     def create_chart_tab(self):
         """Create chart visualization tab"""
@@ -828,6 +1003,176 @@ result = factor_registry.compute('{info['name']}', df, window=30)
             if checkbox.isChecked():
                 selected.append(name)
         return selected
+
+    def refresh_analysis_factor_combo(self):
+        """Refresh factor choices from the left factor tree selection."""
+        current = self.analysis_factor_combo.currentText() if hasattr(self, "analysis_factor_combo") else ""
+        selected = self.get_selected_factors()
+        self.analysis_factor_combo.clear()
+        self.analysis_factor_combo.addItems(selected)
+        if current in selected:
+            self.analysis_factor_combo.setCurrentText(current)
+        if selected:
+            self.analysis_status_label.setText(f"已加载 {len(selected)} 个候选因子")
+        else:
+            self.analysis_status_label.setText("请先在左侧勾选至少一个因子")
+
+    def browse_analysis_factor_dir(self):
+        """Select raw factor directory for factor analysis."""
+        selected_dir = QFileDialog.getExistingDirectory(
+            self,
+            "选择原始因子目录",
+            self.analysis_factor_dir_edit.text().strip() or os.path.join(self.data_dir, "factors"),
+        )
+        if selected_dir:
+            self.analysis_factor_dir_edit.setText(selected_dir)
+
+    def run_factor_analysis(self):
+        """Run native factor effectiveness analysis."""
+        if self.factor_analysis_thread and self.factor_analysis_thread.isRunning():
+            return
+
+        if self.analysis_factor_combo.count() == 0:
+            self.refresh_analysis_factor_combo()
+
+        factor_name = self.analysis_factor_combo.currentText().strip()
+        if not factor_name:
+            QMessageBox.warning(self, "提示", "请先在左侧选择因子，并点击刷新已选因子")
+            return
+
+        stock_codes = self._get_selected_pool_codes()
+        if not stock_codes:
+            QMessageBox.warning(self, "提示", "请选择有效的股票池")
+            return
+
+        factors_dir = self.analysis_factor_dir_edit.text().strip()
+        if not factors_dir or not os.path.isdir(factors_dir):
+            QMessageBox.warning(self, "提示", "原始因子目录不存在")
+            return
+
+        self.run_analysis_btn.setEnabled(False)
+        self.analysis_progress_bar.setVisible(True)
+        self.analysis_progress_bar.setValue(0)
+        self.analysis_progress_bar.setMaximum(len(stock_codes))
+        self.analysis_status_label.setText("正在构建统一因子面板...")
+        self.analysis_summary_label.setText("分析中...")
+        self.analysis_ic_table.setRowCount(0)
+        self.analysis_quantile_table.setRowCount(0)
+        self.analysis_long_short_table.setRowCount(0)
+
+        self.factor_analysis_thread = FactorAnalysisThread(
+            stock_codes,
+            self.data_dir,
+            factors_dir,
+            factor_name,
+            self.analysis_start_date_edit.date().toString("yyyy-MM-dd"),
+            self.analysis_end_date_edit.date().toString("yyyy-MM-dd"),
+            self.analysis_forward_spin.value(),
+            self.analysis_quantile_spin.value(),
+        )
+        self.factor_analysis_thread.progress_signal.connect(self.on_factor_analysis_progress)
+        self.factor_analysis_thread.finished_signal.connect(self.on_factor_analysis_finished)
+        self.factor_analysis_thread.error_signal.connect(self.on_factor_analysis_error)
+        self.factor_analysis_thread.start()
+
+    def on_factor_analysis_progress(self, current, total, code):
+        self.analysis_progress_bar.setMaximum(total)
+        self.analysis_progress_bar.setValue(current)
+        self.analysis_status_label.setText(f"构建因子面板: {code} ({current}/{total})")
+
+    @staticmethod
+    def _fmt_number(value, digits=4):
+        try:
+            if pd.isna(value):
+                return "N/A"
+            return f"{float(value):.{digits}f}"
+        except Exception:
+            return "N/A"
+
+    @staticmethod
+    def _fmt_pct(value, digits=2):
+        try:
+            if pd.isna(value):
+                return "N/A"
+            return f"{float(value) * 100:.{digits}f}%"
+        except Exception:
+            return "N/A"
+
+    def on_factor_analysis_finished(self, result):
+        self.run_analysis_btn.setEnabled(True)
+        self.analysis_progress_bar.setVisible(False)
+
+        summary = result.get("summary", {})
+        build = result.get("build", {})
+        self.analysis_status_label.setText(
+            f"分析完成: 成功 {build.get('success_count', 0)} 只，失败 {build.get('fail_count', 0)} 只"
+        )
+        self.analysis_summary_label.setText(
+            "\n".join([
+                "=== 因子有效性分析（Native） ===",
+                f"因子: {result.get('factor_name', '')}",
+                f"未来收益: {result.get('forward_period', '')}日",
+                f"样本行数: {summary.get('rows', 0):,}",
+                f"交易日数: {summary.get('dates', 0):,}",
+                f"股票数: {summary.get('symbols', 0):,}",
+                f"IC均值: {self._fmt_number(summary.get('ic_mean'))}",
+                f"ICIR: {self._fmt_number(summary.get('ic_ir'))}",
+                f"Rank IC均值: {self._fmt_number(summary.get('rank_ic_mean'))}",
+                f"Rank ICIR: {self._fmt_number(summary.get('rank_ic_ir'))}",
+                f"多空平均收益: {self._fmt_pct(summary.get('long_short_mean'))}",
+                f"多空胜率: {self._fmt_pct(summary.get('long_short_win_rate'))}",
+                f"分组收益差: {self._fmt_pct(summary.get('quantile_return_spread'))}",
+            ])
+        )
+
+        self._populate_ic_table(result.get("ic_by_date", pd.DataFrame()))
+        self._populate_quantile_table(result.get("quantile_returns", pd.DataFrame()))
+        self._populate_long_short_table(result.get("long_short_by_date", pd.DataFrame()))
+
+    def _populate_ic_table(self, df):
+        rows = min(len(df), 300) if df is not None else 0
+        self.analysis_ic_table.setRowCount(rows)
+        if rows == 0:
+            return
+        view = df.tail(rows).reset_index(drop=True)
+        for i, row in view.iterrows():
+            date = row.get("date")
+            date_text = date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date)
+            self.analysis_ic_table.setItem(i, 0, QTableWidgetItem(date_text))
+            self.analysis_ic_table.setItem(i, 1, QTableWidgetItem(self._fmt_number(row.get("ic"))))
+            self.analysis_ic_table.setItem(i, 2, QTableWidgetItem(self._fmt_number(row.get("rank_ic"))))
+            self.analysis_ic_table.setItem(i, 3, QTableWidgetItem(str(int(row.get("count", 0)))))
+
+    def _populate_quantile_table(self, df):
+        rows = len(df) if df is not None else 0
+        self.analysis_quantile_table.setRowCount(rows)
+        if rows == 0:
+            return
+        for i, row in df.iterrows():
+            self.analysis_quantile_table.setItem(i, 0, QTableWidgetItem(str(int(row.get("quantile", 0)))))
+            self.analysis_quantile_table.setItem(i, 1, QTableWidgetItem(self._fmt_pct(row.get("mean"))))
+            self.analysis_quantile_table.setItem(i, 2, QTableWidgetItem(self._fmt_pct(row.get("std"))))
+            self.analysis_quantile_table.setItem(i, 3, QTableWidgetItem(str(int(row.get("count", 0)))))
+
+    def _populate_long_short_table(self, df):
+        rows = min(len(df), 300) if df is not None else 0
+        self.analysis_long_short_table.setRowCount(rows)
+        if rows == 0:
+            return
+        view = df.tail(rows).reset_index(drop=True)
+        for i, row in view.iterrows():
+            date = row.get("date")
+            date_text = date.strftime("%Y-%m-%d") if hasattr(date, "strftime") else str(date)
+            self.analysis_long_short_table.setItem(i, 0, QTableWidgetItem(date_text))
+            self.analysis_long_short_table.setItem(i, 1, QTableWidgetItem(self._fmt_pct(row.get("long_return"))))
+            self.analysis_long_short_table.setItem(i, 2, QTableWidgetItem(self._fmt_pct(row.get("short_return"))))
+            self.analysis_long_short_table.setItem(i, 3, QTableWidgetItem(self._fmt_pct(row.get("long_short_return"))))
+
+    def on_factor_analysis_error(self, msg):
+        self.run_analysis_btn.setEnabled(True)
+        self.analysis_progress_bar.setVisible(False)
+        self.analysis_status_label.setText(msg)
+        QMessageBox.critical(self, "因子有效性分析失败", msg)
 
     def plot_factors(self):
         """Load and plot factors from saved factor data files"""
