@@ -19,7 +19,10 @@ import pyqtgraph as pg
 import pandas as pd
 import numpy as np
 
-from styles import Colors
+try:
+    from strategy_app.styles import Colors
+except ImportError:
+    from styles import Colors
 
 # Local modules
 try:
@@ -112,7 +115,7 @@ class BatchFactorComputeThread(QThread):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.error_signal.emit(f"因子研究数据准备错误: {str(e)}")
+            self.error_signal.emit(f"因子批量计算错误: {str(e)}")
 
 
 class FactorLibraryWidget(QWidget):
@@ -213,7 +216,7 @@ class FactorLibraryWidget(QWidget):
         controls_layout.setSpacing(6)
 
         # --- Stock Pool Batch Compute ---
-        pool_group = QGroupBox("因子研究数据准备 (股票池)")
+        pool_group = QGroupBox("批量因子计算 (股票池)")
         pool_layout = QVBoxLayout(pool_group)
         
         pool_layout.addWidget(QLabel("选择股票池:"))
@@ -253,7 +256,7 @@ class FactorLibraryWidget(QWidget):
         pool_layout.addLayout(date_layout)
 
         # Batch compute button (for stock pool)
-        self.batch_compute_btn = QPushButton("准备因子研究数据")
+        self.batch_compute_btn = QPushButton("批量计算原始因子")
         self.batch_compute_btn.setProperty("class", "success")
         self.batch_compute_btn.clicked.connect(self.batch_compute_factors)
         pool_layout.addWidget(self.batch_compute_btn)
@@ -285,7 +288,7 @@ class FactorLibraryWidget(QWidget):
         plot_layout.addWidget(self.stock_combo)
 
         # Plot button inside the group
-        self.plot_btn = QPushButton("生成因子研究图")
+        self.plot_btn = QPushButton("加载并可视化因子")
         self.plot_btn.setProperty("class", "primary")
         self.plot_btn.clicked.connect(self.plot_factors)
         plot_layout.addWidget(self.plot_btn)
@@ -293,7 +296,7 @@ class FactorLibraryWidget(QWidget):
         controls_layout.addWidget(plot_group)
 
         # --- Other Action Buttons ---
-        self.export_btn = QPushButton("导出数据")
+        self.export_btn = QPushButton("导出当前可视化数据")
         self.export_btn.clicked.connect(self.export_data)
         controls_layout.addWidget(self.export_btn)
         
@@ -340,7 +343,7 @@ class FactorLibraryWidget(QWidget):
 
         # Tab 5: Data Preprocessing
         preprocess_tab = self.create_preprocess_tab()
-        self.result_tabs.addTab(preprocess_tab, "数据预处理")
+        self.result_tabs.addTab(preprocess_tab, "单股时序预处理（研究用）")
 
         right_layout.addWidget(self.result_tabs)
 
@@ -460,7 +463,7 @@ class FactorLibraryWidget(QWidget):
         return stats_widget
 
     def create_preprocess_tab(self):
-        """Create data preprocessing tab - 数据预处理标签页"""
+        """Create single-stock time-series preprocessing tab."""
         preprocess_widget = QWidget()
         main_layout = QHBoxLayout(preprocess_widget)
 
@@ -470,13 +473,17 @@ class FactorLibraryWidget(QWidget):
         config_layout.setContentsMargins(0, 0, 10, 0)
 
         # Title
-        title_label = QLabel("数据预处理流程")
+        title_label = QLabel("单股时序预处理流程")
         title_label.setProperty("class", "section-title")
         config_layout.addWidget(title_label)
 
         # Flow description
-        flow_label = QLabel("缺失值处理 → 去极值 → 标准化 → 中性化")
+        flow_label = QLabel(
+            "缺失值处理 → 去极值 → 标准化 → 中性化\n"
+            "说明：此处按单股历史序列处理，适合单股因子研究；XGBoost截面回测会在策略内按日期做截面预处理。"
+        )
         flow_label.setProperty("class", "description")
+        flow_label.setWordWrap(True)
         config_layout.addWidget(flow_label)
 
         # --- Step 1: Missing Value Handling ---
@@ -574,13 +581,13 @@ class FactorLibraryWidget(QWidget):
         action_layout = QVBoxLayout(action_group)
         
         # Single stock preview button
-        self.preview_preprocess_btn = QPushButton("预览预处理效果 (当前股票)")
+        self.preview_preprocess_btn = QPushButton("预览单股时序预处理 (当前股票)")
         self.preview_preprocess_btn.setProperty("class", "primary")
         self.preview_preprocess_btn.clicked.connect(self.preview_preprocessing)
         action_layout.addWidget(self.preview_preprocess_btn)
         
         # Batch preprocess button
-        self.batch_preprocess_btn = QPushButton("批量预处理因子数据")
+        self.batch_preprocess_btn = QPushButton("批量单股时序预处理")
         self.batch_preprocess_btn.setProperty("class", "success")
         self.batch_preprocess_btn.clicked.connect(self.batch_preprocess_factors)
         action_layout.addWidget(self.batch_preprocess_btn)
@@ -856,7 +863,7 @@ result = factor_registry.compute('{info['name']}', df, window=30)
             factor_file = os.path.join(selected_dir, f"{code}.csv")
             
             if not os.path.exists(factor_file):
-                QMessageBox.warning(self, "提示", f"未找到股票 {code} 的因子数据文件\n请先使用因子研究数据准备功能生成因子数据")
+                QMessageBox.warning(self, "提示", f"未找到股票 {code} 的因子数据文件\n请先使用批量因子计算功能生成原始因子数据")
                 return
 
         try:
@@ -1395,7 +1402,7 @@ result = factor_registry.compute('{info['name']}', df, window=30)
         self.batch_compute_btn.setEnabled(True)
         self.batch_progress_bar.setVisible(False)
         self.batch_progress_label.setVisible(False)
-        QMessageBox.critical(self, "因子研究数据准备失败", msg)
+        QMessageBox.critical(self, "因子批量计算失败", msg)
 
     def check_factor_anomalies(self):
         """Check for anomalies in all factor files in factors folder"""
@@ -1775,7 +1782,7 @@ result = factor_registry.compute('{info['name']}', df, window=30)
             factor_file = os.path.join(selected_dir, f"{code}.csv")
             
             if not os.path.exists(factor_file):
-                QMessageBox.warning(self, "提示", f"未找到股票 {code} 的因子数据文件\n请先使用因子研究数据准备功能生成因子数据")
+                QMessageBox.warning(self, "提示", f"未找到股票 {code} 的因子数据文件\n请先使用批量因子计算功能生成原始因子数据")
                 return
 
         try:
@@ -1904,7 +1911,7 @@ result = factor_registry.compute('{info['name']}', df, window=30)
         # Select output directory
         output_dir = QFileDialog.getExistingDirectory(
             self, "选择预处理结果保存文件夹", 
-            os.path.join(self.data_dir, "factors_preprocessed")
+            os.path.join(self.data_dir, "factors_timeseries_preprocessed")
         )
         
         if not output_dir:
@@ -1944,8 +1951,8 @@ result = factor_registry.compute('{info['name']}', df, window=30)
         
         # Confirm
         reply = QMessageBox.question(
-            self, "确认批量预处理",
-            f"将对 {len(csv_files)} 个文件进行预处理\n\n"
+            self, "确认批量单股时序预处理",
+            f"将对 {len(csv_files)} 个文件进行单股时序预处理\n\n"
             f"处理流程:\n"
             f"1. 缺失值处理: {config['missing_method']}\n"
             f"2. 去极值: {config['winsorize_method']} (n={config['winsorize_n']})\n"
@@ -2017,7 +2024,7 @@ result = factor_registry.compute('{info['name']}', df, window=30)
                     continue
             
             # Show completion message
-            msg = f"批量预处理完成!\n\n"
+            msg = f"批量单股时序预处理完成!\n\n"
             msg += f"成功: {success_count} 个文件\n"
             if fail_count > 0:
                 msg += f"失败: {fail_count} 个文件\n"
@@ -2028,7 +2035,7 @@ result = factor_registry.compute('{info['name']}', df, window=30)
         except Exception as e:
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "批量预处理失败", f"错误: {str(e)}")
+            QMessageBox.critical(self, "批量单股时序预处理失败", f"错误: {str(e)}")
         
         finally:
             self.batch_preprocess_btn.setEnabled(True)

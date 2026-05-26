@@ -12,6 +12,11 @@ from pathlib import Path
 
 from common.strategy_spec import StrategySpec
 
+try:
+    from strategy_app.factors.preprocessor import FactorPreprocessor
+except ImportError:
+    from factors.preprocessor import FactorPreprocessor
+
 # 尝试导入 XGBoost
 try:
     import xgboost as xgb
@@ -51,7 +56,7 @@ class XGBoostCrossSectionalStrategy(CrossSectionalStrategy):
         
         # Get default factors directory
         project_root = Path(__file__).parent.parent.parent
-        default_factors_dir = str(project_root / "data" / "factors_preprocessed")
+        default_factors_dir = str(project_root / "data" / "factors")
         
         self.params = {
             "top_k": 5,                 # 持仓数量
@@ -67,8 +72,13 @@ class XGBoostCrossSectionalStrategy(CrossSectionalStrategy):
             "enable_stop_loss": True,   # 是否开启个股止损
             "stop_loss_pct": 0.08,      # 止损阈值 (8%)
             
-            # Factor library settings
-            "factors_dir": default_factors_dir,  # 因子文件目录
+            # Factor input and cross-sectional preprocessing settings
+            "factors_dir": default_factors_dir,  # 原始因子文件目录
+            "enable_cross_sectional_preprocess": True,  # 是否按交易日做截面预处理
+            "cross_missing_method": "median",            # 截面缺失值处理
+            "cross_winsorize_method": "mad",             # 截面去极值方法
+            "cross_winsorize_n": 3.0,                    # 截面去极值阈值
+            "cross_standardize_method": "zscore",        # 截面标准化方法
             
             # XGBoost 超参数
             "xgb_params": {
@@ -125,7 +135,7 @@ class XGBoostCrossSectionalStrategy(CrossSectionalStrategy):
         
     def prepare_factors(self, data_dict: Dict[str, pd.DataFrame]) -> pd.DataFrame:
         """
-        从因子文件读取因子数据
+        从原始因子文件读取因子数据，并按交易日做截面预处理。
         
         注意：这里不训练模型，模型在 on_rebalance 中滚动训练，
         以避免使用未来数据（数据泄露）
@@ -193,7 +203,8 @@ class XGBoostCrossSectionalStrategy(CrossSectionalStrategy):
                 
                 # Keep only valid columns
                 valid_cols = [c for c in cols if c in merged.columns]
-                factors = merged[valid_cols].dropna()
+                factors = merged[valid_cols].dropna(subset=['next_ret', 'close'])
+                factors.index.name = 'date'
                 factors['code'] = code
                 all_factors.append(factors)
                 
@@ -205,11 +216,44 @@ class XGBoostCrossSectionalStrategy(CrossSectionalStrategy):
             print("Warning: No valid factor data loaded from files")
             return pd.DataFrame()
         
-        # Combine data
+        # Combine data, then apply one cross-sectional preprocessing pass shared
+        # by both rolling training and prediction slices.
         combined = pd.concat(all_factors)
+        combined = self._apply_cross_sectional_preprocess(combined, factor_cols)
         self.all_data = combined.copy()  # Save for training
         
         return combined.reset_index().set_index(['date', 'code']).sort_index()
+
+    def _apply_cross_sectional_preprocess(
+        self,
+        combined: pd.DataFrame,
+        factor_cols: List[str],
+    ) -> pd.DataFrame:
+        """Apply factor preprocessing by date so train and predict use one scale."""
+        if combined.empty or not self.params.get("enable_cross_sectional_preprocess", True):
+            return combined
+
+        panel = combined.reset_index()
+        if "date" not in panel.columns and "index" in panel.columns:
+            panel = panel.rename(columns={"index": "date"})
+
+        available_factor_cols = [col for col in factor_cols if col in panel.columns]
+        if not available_factor_cols:
+            return combined
+
+        preprocessor = FactorPreprocessor()
+        processed = preprocessor.process_cross_sectional(
+            panel,
+            date_col="date",
+            factor_columns=available_factor_cols,
+            missing_method=self.params.get("cross_missing_method", "median"),
+            winsorize_method=self.params.get("cross_winsorize_method", "mad"),
+            winsorize_n=float(self.params.get("cross_winsorize_n", 3.0)),
+            standardize_method=self.params.get("cross_standardize_method", "zscore"),
+            neutralize_method="none",
+        )
+        processed["date"] = pd.to_datetime(processed["date"])
+        return processed.set_index("date").sort_index()
     
     def _train_model(self, train_data: pd.DataFrame):
         """
@@ -389,19 +433,10 @@ class XGBoostCrossSectionalStrategy(CrossSectionalStrategy):
         if len(available_factors) < self.params['top_k']:
             return
         
-        # 因子标准化（截面标准化）
+        # 因子已在 prepare_factors 中按交易日截面预处理，预测阶段不再重复标准化。
         feature_cols = [c for c in self.params['factor_cols'] if c in available_factors.columns]
-        
-        for col in feature_cols:
-            mean = available_factors[col].mean()
-            std = available_factors[col].std()
-            if std > 0:
-                # Winsorize 去极值
-                available_factors[col] = available_factors[col].clip(mean - 3*std, mean + 3*std)
-                # Z-Score 标准化
-                available_factors[col] = (available_factors[col] - mean) / std
-            else:
-                available_factors[col] = 0
+        if not feature_cols:
+            return
         
         # 模型预测
         X_pred = available_factors[feature_cols].fillna(0).values

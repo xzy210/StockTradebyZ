@@ -7,25 +7,22 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QProgressBar, QLabel, QHeaderView,
     QSplitter, QGroupBox, QDateEdit, QSpinBox, QMessageBox, QTabWidget,
     QSlider, QDialog, QTreeWidget, QTreeWidgetItem, QCheckBox, QScrollArea,
-    QDoubleSpinBox, QFormLayout, QGridLayout
+    QDoubleSpinBox, QFormLayout, QGridLayout, QFileDialog, QLineEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QDate, QTimer
 from PyQt6.QtGui import QColor
 
-# Import factor registry
+# Import through the package path first so strategy modules keep their relative imports.
 try:
-    from factors import factor_registry
-except ImportError:
     from strategy_app.factors import factor_registry
-
-try:
-    from strategies import get_all_strategies, get_strategy
-    from strategies.cross_sectional_strategy import CrossSectionalStrategy
-    from backtest import BacktestConfig, UnifiedBacktestEngine
-except ImportError:
     from strategy_app.strategies import get_all_strategies, get_strategy
     from strategy_app.strategies.cross_sectional_strategy import CrossSectionalStrategy
     from strategy_app.backtest import BacktestConfig, UnifiedBacktestEngine
+except ImportError:
+    from factors import factor_registry
+    from strategies import get_all_strategies, get_strategy
+    from strategies.cross_sectional_strategy import CrossSectionalStrategy
+    from backtest import BacktestConfig, UnifiedBacktestEngine
 
 from common.data_portal import get_data_portal
 
@@ -151,7 +148,21 @@ class CrossSectionalBacktestThread(QThread):
             engine = UnifiedBacktestEngine(
                 BacktestConfig(initial_cash=self.initial_cash, mode="cross_sectional")
             )
-            result = engine.run(strategy, data_bundle, mode="cross_sectional")
+
+            def on_engine_progress(current, total, message=""):
+                if total <= 0:
+                    return
+                self.progress_updated.emit(current, total)
+                step = max(1, total // 100)
+                if current == 1 or current == total or current % step == 0:
+                    self.info_signal.emit(f"回测进度 ({current}/{total}): {message}")
+
+            result = engine.run(
+                strategy,
+                data_bundle,
+                mode="cross_sectional",
+                progress_callback=on_engine_progress,
+            )
             
             # 将评分历史附加到结果中
             result['history_scores'] = history_scores
@@ -263,9 +274,22 @@ class CrossSectionalBacktestWidget(QWidget):
         self.backtest_result = None # Store result for replay
         self.stock_name_map = {}
         self.normalized_dates = []  # 归一化后的日期列表
+        self.xgb_default_params = self._load_strategy_default_params("xgboost_cross_sectional")
         
         self.setupUI()
         self.load_names()
+
+    def _load_strategy_default_params(self, strategy_id):
+        """Load strategy params once so UI defaults stay in sync with the strategy."""
+        try:
+            strategy = get_strategy(strategy_id)
+            params = getattr(strategy, "params", {}) or {}
+            defaults = dict(params)
+            defaults["xgb_params"] = dict(params.get("xgb_params", {}) or {})
+            defaults["factor_cols"] = list(params.get("factor_cols", []) or [])
+            return defaults
+        except Exception:
+            return {}
 
     def load_names(self):
         self.stock_name_map = get_data_portal().get_name_map(asset_type="stock")
@@ -435,6 +459,123 @@ class CrossSectionalBacktestWidget(QWidget):
                         selected_factors.append(factor_name)
         
         return selected_factors
+
+    def _browse_factor_dir(self):
+        """Select the raw factor directory used by XGBoost."""
+        current_dir = self.factor_dir_edit.text().strip() if hasattr(self, "factor_dir_edit") else ""
+        selected_dir = QFileDialog.getExistingDirectory(
+            self,
+            "选择原始因子目录",
+            current_dir or self.data_dir,
+        )
+        if selected_dir:
+            self.factor_dir_edit.setText(selected_dir)
+            self._update_factor_dir_status()
+
+    def _get_factor_dir(self):
+        return self.factor_dir_edit.text().strip() if hasattr(self, "factor_dir_edit") else ""
+
+    @staticmethod
+    def _clean_symbol(code):
+        value = str(code or "").strip()
+        return value.split(".")[0] if "." in value else value
+
+    def _get_effective_factor_cols(self, sid):
+        if sid == "xgboost_cross_sectional" and not self.use_default_factors_cb.isChecked():
+            return self._get_selected_factors()
+        return list(self.xgb_default_params.get("factor_cols", []) or [])
+
+    def _inspect_factor_files(self, stock_codes, factor_cols, factors_dir):
+        """Return factor file availability and a light schema check."""
+        if not factors_dir or not os.path.isdir(factors_dir):
+            return {
+                "ok": False,
+                "message": "原始因子目录不存在",
+                "available": 0,
+                "total": len(stock_codes),
+                "missing": list(stock_codes),
+                "missing_cols": [],
+            }
+
+        total = len(stock_codes)
+        available_files = []
+        missing = []
+        for code in stock_codes:
+            factor_file = os.path.join(factors_dir, f"{self._clean_symbol(code)}.csv")
+            if os.path.exists(factor_file):
+                available_files.append(factor_file)
+            else:
+                missing.append(code)
+
+        missing_cols = []
+        if available_files and factor_cols:
+            try:
+                sample = pd.read_csv(available_files[0], nrows=5)
+                missing_cols = [col for col in factor_cols if col not in sample.columns]
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "message": f"因子文件读取失败: {exc}",
+                    "available": len(available_files),
+                    "total": total,
+                    "missing": missing,
+                    "missing_cols": [],
+                }
+
+        ok = bool(available_files) and not missing_cols
+        if not available_files:
+            message = "未找到任何股票的原始因子文件"
+        elif missing_cols:
+            message = f"原始因子文件缺少字段: {', '.join(missing_cols[:5])}"
+        elif missing:
+            message = f"原始因子文件 {len(available_files)}/{total} 可用"
+        else:
+            message = f"原始因子文件 {len(available_files)}/{total} 可用"
+
+        return {
+            "ok": ok,
+            "message": message,
+            "available": len(available_files),
+            "total": total,
+            "missing": missing,
+            "missing_cols": missing_cols,
+        }
+
+    def _update_factor_dir_status(self):
+        if not hasattr(self, "factor_dir_status_label"):
+            return
+        factors_dir = self._get_factor_dir()
+        if not factors_dir:
+            self.factor_dir_status_label.setText("未设置原始因子目录")
+        elif os.path.isdir(factors_dir):
+            csv_count = len([f for f in os.listdir(factors_dir) if f.endswith(".csv")])
+            self.factor_dir_status_label.setText(f"目录可用，含 {csv_count} 个原始因子文件")
+        else:
+            self.factor_dir_status_label.setText("原始因子目录不存在")
+
+    def _confirm_factor_precheck(self, sid, stock_codes, selected_factors):
+        if sid != "xgboost_cross_sectional":
+            return True
+        factor_cols = selected_factors or self._get_effective_factor_cols(sid)
+        inspection = self._inspect_factor_files(stock_codes, factor_cols, self._get_factor_dir())
+        self.factor_dir_status_label.setText(inspection["message"])
+        if not inspection["ok"]:
+            QMessageBox.warning(self, "原始因子预检查失败", inspection["message"])
+            return False
+        missing_count = len(inspection["missing"])
+        if missing_count <= 0:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "原始因子文件不完整",
+            (
+                f"股票池中有 {missing_count} 只股票缺少原始因子文件，"
+                f"当前可用 {inspection['available']}/{inspection['total']}。\n是否继续回测？"
+            ),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
     
     def _on_strategy_changed(self):
         """Handle strategy selection change - show/hide XGBoost params"""
@@ -444,6 +585,10 @@ class CrossSectionalBacktestWidget(QWidget):
         # Show XGBoost params group only for XGBoost strategy
         if hasattr(self, 'xgb_params_group'):
             self.xgb_params_group.setVisible(is_xgboost)
+        if hasattr(self, 'factor_dir_group'):
+            self.factor_dir_group.setVisible(is_xgboost)
+        if hasattr(self, 'cross_preprocess_group'):
+            self.cross_preprocess_group.setVisible(is_xgboost)
 
     def setupUI(self):
         layout = QHBoxLayout(self)
@@ -517,6 +662,69 @@ class CrossSectionalBacktestWidget(QWidget):
         self._set_factor_tree_checkable(False)
         
         left_layout.addWidget(factor_group)
+
+        # 3.1 XGBoost 原始因子目录
+        self.factor_dir_group = QGroupBox("XGBoost原始因子目录")
+        factor_dir_layout = QVBoxLayout(self.factor_dir_group)
+        factor_dir_layout.setSpacing(4)
+        factor_dir_row = QHBoxLayout()
+        self.factor_dir_edit = QLineEdit()
+        self.factor_dir_edit.setText(str(self.xgb_default_params.get("factors_dir", "")))
+        self.factor_dir_edit.setToolTip("原始因子 CSV 所在目录，文件名格式如 000001.csv")
+        self.factor_dir_edit.editingFinished.connect(self._update_factor_dir_status)
+        factor_dir_row.addWidget(self.factor_dir_edit)
+        self.factor_dir_btn = QPushButton("选择")
+        self.factor_dir_btn.clicked.connect(self._browse_factor_dir)
+        factor_dir_row.addWidget(self.factor_dir_btn)
+        factor_dir_layout.addLayout(factor_dir_row)
+        self.factor_dir_status_label = QLabel("")
+        self.factor_dir_status_label.setWordWrap(True)
+        factor_dir_layout.addWidget(self.factor_dir_status_label)
+        self._update_factor_dir_status()
+        left_layout.addWidget(self.factor_dir_group)
+
+        # 3.2 XGBoost 截面因子预处理
+        self.cross_preprocess_group = QGroupBox("截面因子预处理")
+        cross_grid = QGridLayout(self.cross_preprocess_group)
+        cross_grid.setSpacing(4)
+
+        self.cross_preprocess_cb = QCheckBox("启用截面预处理")
+        self.cross_preprocess_cb.setChecked(bool(self.xgb_default_params.get("enable_cross_sectional_preprocess", True)))
+        self.cross_preprocess_cb.setToolTip("按交易日对股票池截面做缺失值处理、去极值和标准化")
+        cross_grid.addWidget(self.cross_preprocess_cb, 0, 0, 1, 4)
+
+        cross_grid.addWidget(QLabel("去极值:"), 1, 0)
+        self.cross_winsorize_combo = QComboBox()
+        self.cross_winsorize_combo.addItem("MAD法", "mad")
+        self.cross_winsorize_combo.addItem("3σ法", "sigma")
+        self.cross_winsorize_combo.addItem("分位数", "percentile")
+        self.cross_winsorize_combo.addItem("不去极值", "none")
+        default_winsorize = self.xgb_default_params.get("cross_winsorize_method", "mad")
+        winsorize_idx = self.cross_winsorize_combo.findData(default_winsorize)
+        self.cross_winsorize_combo.setCurrentIndex(max(0, winsorize_idx))
+        cross_grid.addWidget(self.cross_winsorize_combo, 1, 1)
+
+        cross_grid.addWidget(QLabel("阈值:"), 1, 2)
+        self.cross_winsorize_n_spin = QDoubleSpinBox()
+        self.cross_winsorize_n_spin.setRange(0.001, 10.0)
+        self.cross_winsorize_n_spin.setSingleStep(0.1)
+        self.cross_winsorize_n_spin.setDecimals(3)
+        self.cross_winsorize_n_spin.setValue(float(self.xgb_default_params.get("cross_winsorize_n", 3.0)))
+        self.cross_winsorize_n_spin.setToolTip("MAD/3σ为倍数；分位数法可填0.01表示1%和99%截断")
+        cross_grid.addWidget(self.cross_winsorize_n_spin, 1, 3)
+
+        cross_grid.addWidget(QLabel("标准化:"), 2, 0)
+        self.cross_standardize_combo = QComboBox()
+        self.cross_standardize_combo.addItem("Z-Score", "zscore")
+        self.cross_standardize_combo.addItem("排名", "rank")
+        self.cross_standardize_combo.addItem("Min-Max", "minmax")
+        self.cross_standardize_combo.addItem("不标准化", "none")
+        default_standardize = self.xgb_default_params.get("cross_standardize_method", "zscore")
+        standardize_idx = self.cross_standardize_combo.findData(default_standardize)
+        self.cross_standardize_combo.setCurrentIndex(max(0, standardize_idx))
+        cross_grid.addWidget(self.cross_standardize_combo, 2, 1, 1, 3)
+
+        left_layout.addWidget(self.cross_preprocess_group)
         
         # 4. XGBoost策略参数设置 (使用紧凑的网格布局)
         self.xgb_params_group = QGroupBox("XGBoost参数")
@@ -527,13 +735,13 @@ class CrossSectionalBacktestWidget(QWidget):
         xgb_grid.addWidget(QLabel("持仓:"), 0, 0)
         self.xgb_top_k_spin = QSpinBox()
         self.xgb_top_k_spin.setRange(1, 50)
-        self.xgb_top_k_spin.setValue(5)
+        self.xgb_top_k_spin.setValue(int(self.xgb_default_params.get("top_k", 5)))
         xgb_grid.addWidget(self.xgb_top_k_spin, 0, 1)
         
         xgb_grid.addWidget(QLabel("调仓:"), 0, 2)
         self.xgb_rebalance_spin = QSpinBox()
         self.xgb_rebalance_spin.setRange(1, 60)
-        self.xgb_rebalance_spin.setValue(20)
+        self.xgb_rebalance_spin.setValue(int(self.xgb_default_params.get("rebalance_period", 20)))
         self.xgb_rebalance_spin.setSuffix("日")
         xgb_grid.addWidget(self.xgb_rebalance_spin, 0, 3)
         
@@ -541,24 +749,24 @@ class CrossSectionalBacktestWidget(QWidget):
         xgb_grid.addWidget(QLabel("窗口:"), 1, 0)
         self.xgb_train_window_spin = QSpinBox()
         self.xgb_train_window_spin.setRange(60, 500)
-        self.xgb_train_window_spin.setValue(252)
+        self.xgb_train_window_spin.setValue(int(self.xgb_default_params.get("train_window", 252)))
         xgb_grid.addWidget(self.xgb_train_window_spin, 1, 1)
         
         xgb_grid.addWidget(QLabel("样本:"), 1, 2)
         self.xgb_min_samples_spin = QSpinBox()
         self.xgb_min_samples_spin.setRange(50, 2000)
-        self.xgb_min_samples_spin.setValue(100)
+        self.xgb_min_samples_spin.setValue(int(self.xgb_default_params.get("min_train_samples", 500)))
         xgb_grid.addWidget(self.xgb_min_samples_spin, 1, 3)
         
         # Row 2: 趋势过滤 | 趋势均线
         self.xgb_trend_filter_cb = QCheckBox("趋势过滤")
-        self.xgb_trend_filter_cb.setChecked(True)
+        self.xgb_trend_filter_cb.setChecked(bool(self.xgb_default_params.get("filter_downtrend", True)))
         xgb_grid.addWidget(self.xgb_trend_filter_cb, 2, 0, 1, 2)
         
         xgb_grid.addWidget(QLabel("均线:"), 2, 2)
         self.xgb_trend_ma_spin = QSpinBox()
         self.xgb_trend_ma_spin.setRange(5, 60)
-        self.xgb_trend_ma_spin.setValue(20)
+        self.xgb_trend_ma_spin.setValue(int(self.xgb_default_params.get("trend_ma", 20)))
         self.xgb_trend_ma_spin.setSuffix("日")
         xgb_grid.addWidget(self.xgb_trend_ma_spin, 2, 3)
         
@@ -566,27 +774,28 @@ class CrossSectionalBacktestWidget(QWidget):
         xgb_grid.addWidget(QLabel("深度:"), 3, 0)
         self.xgb_max_depth_spin = QSpinBox()
         self.xgb_max_depth_spin.setRange(2, 10)
-        self.xgb_max_depth_spin.setValue(4)
+        self.xgb_max_depth_spin.setValue(int(self.xgb_default_params.get("xgb_params", {}).get("max_depth", 4)))
         xgb_grid.addWidget(self.xgb_max_depth_spin, 3, 1)
         
         xgb_grid.addWidget(QLabel("学习率:"), 3, 2)
         self.xgb_learning_rate_spin = QDoubleSpinBox()
         self.xgb_learning_rate_spin.setRange(0.01, 0.5)
         self.xgb_learning_rate_spin.setSingleStep(0.01)
-        self.xgb_learning_rate_spin.setValue(0.1)
+        self.xgb_learning_rate_spin.setValue(float(self.xgb_default_params.get("xgb_params", {}).get("learning_rate", 0.1)))
         xgb_grid.addWidget(self.xgb_learning_rate_spin, 3, 3)
         
         # Row 4: 树数量 | 标签周期
         xgb_grid.addWidget(QLabel("树数:"), 4, 0)
         self.xgb_n_estimators_spin = QSpinBox()
         self.xgb_n_estimators_spin.setRange(10, 500)
-        self.xgb_n_estimators_spin.setValue(100)
+        self.xgb_n_estimators_spin.setValue(int(self.xgb_default_params.get("xgb_params", {}).get("n_estimators", 100)))
         xgb_grid.addWidget(self.xgb_n_estimators_spin, 4, 1)
         
         xgb_grid.addWidget(QLabel("标签:"), 4, 2)
         self.xgb_label_period_spin = QSpinBox()
         self.xgb_label_period_spin.setRange(0, 60)
-        self.xgb_label_period_spin.setValue(0)
+        label_period = self.xgb_default_params.get("label_period")
+        self.xgb_label_period_spin.setValue(int(label_period or 0))
         self.xgb_label_period_spin.setSuffix("日")
         self.xgb_label_period_spin.setToolTip("标签收益率间隔天数 (0=跟随调仓周期)")
         xgb_grid.addWidget(self.xgb_label_period_spin, 4, 3)
@@ -596,10 +805,24 @@ class CrossSectionalBacktestWidget(QWidget):
         self.xgb_clip_range_spin = QDoubleSpinBox()
         self.xgb_clip_range_spin.setRange(0.05, 1.0)
         self.xgb_clip_range_spin.setSingleStep(0.05)
-        self.xgb_clip_range_spin.setValue(0.2)
+        self.xgb_clip_range_spin.setValue(float(self.xgb_default_params.get("clip_range", 0.2)))
         self.xgb_clip_range_spin.setDecimals(2)
         self.xgb_clip_range_spin.setToolTip("训练标签收益率clip范围 (±clip_range)")
         xgb_grid.addWidget(self.xgb_clip_range_spin, 5, 1)
+
+        # Row 6: 止损参数
+        self.xgb_stop_loss_cb = QCheckBox("个股止损")
+        self.xgb_stop_loss_cb.setChecked(bool(self.xgb_default_params.get("enable_stop_loss", True)))
+        xgb_grid.addWidget(self.xgb_stop_loss_cb, 6, 0, 1, 2)
+
+        xgb_grid.addWidget(QLabel("止损:"), 6, 2)
+        self.xgb_stop_loss_spin = QDoubleSpinBox()
+        self.xgb_stop_loss_spin.setRange(0.01, 0.5)
+        self.xgb_stop_loss_spin.setSingleStep(0.01)
+        self.xgb_stop_loss_spin.setValue(float(self.xgb_default_params.get("stop_loss_pct", 0.08)))
+        self.xgb_stop_loss_spin.setDecimals(2)
+        self.xgb_stop_loss_spin.setToolTip("个股从成本价回撤达到该比例时卖出")
+        xgb_grid.addWidget(self.xgb_stop_loss_spin, 6, 3)
         
         left_layout.addWidget(self.xgb_params_group)
         
@@ -711,6 +934,14 @@ class CrossSectionalBacktestWidget(QWidget):
         self.train_info_label.setStyleSheet("font-family: Consolas, monospace; padding: 5px;")
         self.train_info_label.setWordWrap(True)
         scores_layout.addWidget(self.train_info_label)
+
+        self.feature_importance_table = QTableWidget()
+        self.feature_importance_table.setColumnCount(3)
+        self.feature_importance_table.setHorizontalHeaderLabels(["因子", "重要性", "占比条"])
+        self.feature_importance_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.feature_importance_table.setMaximumHeight(180)
+        self.feature_importance_table.setVisible(False)
+        scores_layout.addWidget(self.feature_importance_table)
         
         self.scores_table = QTableWidget()
         self.scores_table.setColumnCount(4)
@@ -777,6 +1008,9 @@ class CrossSectionalBacktestWidget(QWidget):
             if not selected_factors:
                 QMessageBox.warning(self, "提示", "请至少选择一个因子，或勾选\"使用策略默认因子\"")
                 return
+
+        if not self._confirm_factor_precheck(sid, stock_codes, selected_factors):
+            return
         
         self.run_btn.setEnabled(False)
         self.run_btn.setText("截面选股回测中...")
@@ -801,6 +1035,14 @@ class CrossSectionalBacktestWidget(QWidget):
                 "trend_ma": self.xgb_trend_ma_spin.value(),
                 "label_period": label_period_val if label_period_val > 0 else None,
                 "clip_range": self.xgb_clip_range_spin.value(),
+                "enable_stop_loss": self.xgb_stop_loss_cb.isChecked(),
+                "stop_loss_pct": self.xgb_stop_loss_spin.value(),
+                "factors_dir": self._get_factor_dir(),
+                "enable_cross_sectional_preprocess": self.cross_preprocess_cb.isChecked(),
+                "cross_missing_method": "median",
+                "cross_winsorize_method": self.cross_winsorize_combo.currentData(),
+                "cross_winsorize_n": self.cross_winsorize_n_spin.value(),
+                "cross_standardize_method": self.cross_standardize_combo.currentData(),
                 "xgb_params": {
                     "objective": "reg:squarederror",
                     "max_depth": self.xgb_max_depth_spin.value(),
@@ -1073,6 +1315,8 @@ class CrossSectionalBacktestWidget(QWidget):
         # 1. Update Scores Table and Train Info
         self.scores_table.setRowCount(0)
         self.train_info_label.setText("")  # 清空训练信息
+        self.feature_importance_table.setRowCount(0)
+        self.feature_importance_table.setVisible(False)
         
         history_scores = self.backtest_result.get('history_scores', {})
         history_train_info = self.backtest_result.get('history_train_info', {})
@@ -1099,18 +1343,22 @@ class CrossSectionalBacktestWidget(QWidget):
             # 显示训练信息（如 XGBoost 特征重要性）
             if date in history_train_info:
                 train_info = history_train_info[date]
-                info_text = f"📊 训练样本: {train_info.get('train_samples', 'N/A')}"
+                self.train_info_label.setText(f"训练样本: {train_info.get('train_samples', 'N/A')}")
                 
                 if 'feature_importance' in train_info:
-                    info_text += "  |  特征重要性: "
-                    fi_items = train_info['feature_importance'][:5]  # Top 5
-                    fi_str = ", ".join([f"{name}={imp:.3f}" for name, imp in fi_items])
-                    info_text += fi_str
-                
-                self.train_info_label.setText(info_text)
+                    fi_items = list(train_info['feature_importance'][:10])
+                    max_importance = max([float(imp) for _, imp in fi_items], default=0.0)
+                    self.feature_importance_table.setRowCount(len(fi_items))
+                    for row, (name, importance) in enumerate(fi_items):
+                        importance = float(importance)
+                        bar_len = int((importance / max_importance) * 20) if max_importance > 0 else 0
+                        self.feature_importance_table.setItem(row, 0, QTableWidgetItem(str(name)))
+                        self.feature_importance_table.setItem(row, 1, QTableWidgetItem(f"{importance:.4f}"))
+                        self.feature_importance_table.setItem(row, 2, QTableWidgetItem("#" * bar_len))
+                    self.feature_importance_table.setVisible(bool(fi_items))
         else:
             # 如果当天没有评分数据（非调仓日），显示提示
-            self.train_info_label.setText("📅 非调仓日")
+            self.train_info_label.setText("非调仓日")
         
         # 2. Update Trades Table (Day's activity)
         trades = self.backtest_result.get('trades', [])
