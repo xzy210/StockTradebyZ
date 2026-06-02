@@ -1483,6 +1483,21 @@ class StrategyBudgetService:
         )
         state.capital_limit = new_capital
         state.cash_balance = round(float(state.cash_balance or 0.0) + delta, 2)
+        state.capital_ledger.append(
+            {
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "action": "资金划入" if delta > 0 else "资金划出",
+                "code": "",
+                "name": "",
+                "amount": delta,
+                "commission": 0.0,
+                "balance": round(float(state.cash_balance or 0.0), 2),
+                "fee_source": "[资金管理]",
+            }
+        )
+        if len(state.capital_ledger) > 500:
+            state.capital_ledger = state.capital_ledger[-500:]
         state.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._save_states()
         return {

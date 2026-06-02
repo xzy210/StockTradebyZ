@@ -36,6 +36,7 @@ from trading_app.services.live_strategy_end_of_day_service import StrategyEndOfD
 from trading_app.services.strategy_constants import normalize_symbol_code
 from trading_app.services.strategy_registry_service import get_strategy_registry_service
 from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy_trade_view_service import get_strategy_trade_view_service
 from trading_app.services.qmt_startup_orchestrator import QmtStartupOrchestrator
 from trading_app.services.market_data_status_service import get_market_data_status_service
 from trading_app.services.trade_record_service import get_trade_record_service
@@ -1781,26 +1782,23 @@ class ETFRotationLiveWidget(QWidget):
     def _refresh_equity_curve(self):
         """刷新净值曲线 Tab（降序展示，最新在上）"""
         t = self._THEME
-        equity_dict = self.engine.state.daily_equity
-        if not equity_dict:
+        strategy_id, strategy_name, virtual_account_id = self._etf_strategy_identity()
+        rows = get_strategy_trade_view_service().get_equity_curve(
+            strategy_id,
+            strategy_name=strategy_name,
+            virtual_account_id=virtual_account_id,
+        )
+        if not rows:
             self.equity_table.setRowCount(0)
             return
 
-        dates = sorted(equity_dict.keys())
-        rows = []
-        initial = self.engine.config.dedicated_capital or equity_dict.get(dates[0], 1.0)
-        prev_val = None
-        for d in dates:
-            val = equity_dict[d]
-            daily_chg = ((val - prev_val) / prev_val * 100
-                         if prev_val and prev_val > 0 else 0.0)
-            cum_ret   = (val - initial) / initial * 100 if initial > 0 else 0.0
-            rows.append((d, val, daily_chg, cum_ret))
-            prev_val = val
-
         rows_desc = list(reversed(rows))
         self.equity_table.setRowCount(len(rows_desc))
-        for i, (d, val, daily_chg, cum_ret) in enumerate(rows_desc):
+        for i, row in enumerate(rows_desc):
+            d = str(row.get("date", "") or "")
+            val = float(row.get("total_asset", 0.0) or 0.0)
+            daily_chg = float(row.get("daily_return_pct", 0.0) or 0.0)
+            cum_ret = float(row.get("cumulative_return_pct", 0.0) or 0.0)
             self.equity_table.setItem(i, 0, QTableWidgetItem(d))
 
             val_item = QTableWidgetItem(f"{val:,.2f}")

@@ -537,6 +537,12 @@ class StrategyTradeViewService:
         if not ctx.strategy_id:
             return []
 
+        state = self.strategy_budget.get_strategy_state_record(
+            ctx.strategy_id,
+            strategy_name=ctx.strategy_name,
+            virtual_account_id=ctx.virtual_account_id,
+            real_total_asset=0.0,
+        )
         snapshots = self.trade_service.get_strategy_daily_pnl_snapshots(
             strategy_id=ctx.strategy_id,
             limit=limit,
@@ -550,19 +556,14 @@ class StrategyTradeViewService:
                         "total_asset": round(float(snap.total_asset or 0.0), 2),
                         "cash": round(float(snap.cash or 0.0), 2),
                         "market_value": round(float(snap.market_value or 0.0), 2),
+                        "capital_limit": round(float(snap.capital_limit or 0.0), 2),
                         "daily_return_pct": 0.0,
                         "cumulative_return_pct": 0.0,
                     }
                 )
             rows = self._override_ai_runtime_equity_row(ctx, rows)
-            return self._recalculate_equity_metrics(rows)
+            return self._recalculate_equity_metrics(rows, state=state)
 
-        state = self.strategy_budget.get_strategy_state_record(
-            ctx.strategy_id,
-            strategy_name=ctx.strategy_name,
-            virtual_account_id=ctx.virtual_account_id,
-            real_total_asset=0.0,
-        )
         equity_dict = dict(getattr(state, "daily_equity", {}) or {})
         if not equity_dict:
             return rows
@@ -575,12 +576,13 @@ class StrategyTradeViewService:
                     "total_asset": total_asset,
                     "cash": 0.0,
                     "market_value": 0.0,
+                    "capital_limit": round(float(getattr(state, "capital_limit", 0.0) or 0.0), 2),
                     "daily_return_pct": 0.0,
                     "cumulative_return_pct": 0.0,
                 }
             )
         rows = self._override_ai_runtime_equity_row(ctx, rows)
-        return self._recalculate_equity_metrics(rows)
+        return self._recalculate_equity_metrics(rows, state=state)
 
     def _override_ai_runtime_equity_row(
         self,
@@ -643,33 +645,151 @@ class StrategyTradeViewService:
                 "total_asset": round(cash + market_value, 2),
                 "cash": cash,
                 "market_value": market_value,
+                "capital_limit": round(capital_limit, 2),
                 "daily_return_pct": 0.0,
                 "cumulative_return_pct": 0.0,
             }
         except Exception:
             return None
 
-    @staticmethod
-    def _recalculate_equity_metrics(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _recalculate_equity_metrics(
+        self,
+        rows: List[Dict[str, Any]],
+        *,
+        state: Optional[Any] = None,
+    ) -> List[Dict[str, Any]]:
         if not rows:
             return []
         recalculated: List[Dict[str, Any]] = []
-        first_asset = float(rows[0].get("total_asset", 0.0) or 0.0)
+        first_asset = round(float(rows[0].get("total_asset", 0.0) or 0.0), 2)
+        base_capital = self._infer_initial_capital(first_asset, rows, state=state)
+        if base_capital <= 0:
+            base_capital = first_asset
+        capital_flows = self._build_external_capital_flows(rows, base_capital, state=state)
+        cumulative_flow = 0.0
         prev_asset = 0.0
         for item in rows:
             row = dict(item)
-            total_asset = float(row.get("total_asset", 0.0) or 0.0)
+            date_key = str(row.get("date", "") or "")
+            total_asset = round(float(row.get("total_asset", 0.0) or 0.0), 2)
+            flow = round(float(capital_flows.get(date_key, 0.0) or 0.0), 2)
             row["daily_return_pct"] = (
-                round((total_asset - prev_asset) / prev_asset * 100, 2)
+                round((total_asset - prev_asset - flow) / prev_asset * 100, 2)
                 if prev_asset > 0 else 0.0
             )
+            cumulative_flow = round(cumulative_flow + flow, 2)
+            invested_capital = round(base_capital + cumulative_flow, 2)
+            net_profit = round(total_asset - invested_capital, 2)
             row["cumulative_return_pct"] = (
-                round((total_asset - first_asset) / first_asset * 100, 2)
-                if first_asset > 0 else 0.0
+                round(net_profit / invested_capital * 100, 2)
+                if invested_capital > 0 else 0.0
             )
+            if abs(flow) >= 0.01:
+                row["external_capital_flow"] = flow
             recalculated.append(row)
             prev_asset = total_asset
         return recalculated
+
+    @staticmethod
+    def _infer_initial_capital(
+        first_asset: float,
+        rows: List[Dict[str, Any]],
+        *,
+        state: Optional[Any] = None,
+    ) -> float:
+        first_capital = float(rows[0].get("capital_limit", 0.0) or 0.0)
+        if first_capital > 0 and first_capital <= max(first_asset * 1.5, first_asset + 5000):
+            return round(first_capital, 2)
+
+        current_capital = max(
+            [float(row.get("capital_limit", 0.0) or 0.0) for row in rows]
+            + [float(getattr(state, "capital_limit", 0.0) or 0.0) if state is not None else 0.0]
+        )
+        if current_capital > 0 and first_asset > 0 and current_capital - first_asset > max(first_asset * 0.5, 5000.0):
+            candidates = []
+            for step in (1000.0, 5000.0, 10000.0):
+                rounded = round(first_asset / step) * step
+                if rounded > 0 and abs(rounded - first_asset) / rounded <= 0.1:
+                    candidates.append(rounded)
+            if candidates:
+                return round(min(candidates, key=lambda value: abs(value - first_asset)), 2)
+        return round(first_asset, 2)
+
+    def _build_external_capital_flows(
+        self,
+        rows: List[Dict[str, Any]],
+        base_capital: float,
+        *,
+        state: Optional[Any] = None,
+    ) -> Dict[str, float]:
+        flows = self._capital_flows_from_ledger(state)
+        if not rows:
+            return flows
+
+        prev_capital = float(rows[0].get("capital_limit", 0.0) or 0.0)
+        for row in rows[1:]:
+            current_capital = float(row.get("capital_limit", 0.0) or 0.0)
+            if prev_capital > 0 and current_capital > 0:
+                delta = round(current_capital - prev_capital, 2)
+                if abs(delta) >= 0.01:
+                    date_key = str(row.get("date", "") or "")
+                    if abs(flows.get(date_key, 0.0)) < 0.01:
+                        flows[date_key] = delta
+            if current_capital > 0:
+                prev_capital = current_capital
+
+        explicit_total_flow = round(sum(flows.values()), 2)
+        current_capital = max(
+            [float(row.get("capital_limit", 0.0) or 0.0) for row in rows]
+            + [float(getattr(state, "capital_limit", 0.0) or 0.0) if state is not None else 0.0]
+        )
+        inferred_total_flow = round(current_capital - base_capital, 2)
+        missing_flow = round(inferred_total_flow - explicit_total_flow, 2)
+        if abs(missing_flow) < 0.01:
+            return flows
+
+        jump_date = self._find_likely_external_flow_date(rows, missing_flow)
+        if jump_date:
+            flows[jump_date] = round(flows.get(jump_date, 0.0) + missing_flow, 2)
+        return flows
+
+    @staticmethod
+    def _capital_flows_from_ledger(state: Optional[Any]) -> Dict[str, float]:
+        flows: Dict[str, float] = {}
+        if state is None:
+            return flows
+        trade_actions = ("买入划出", "卖出回收", "对账校准")
+        for item in list(getattr(state, "capital_ledger", []) or []):
+            if not isinstance(item, dict):
+                continue
+            action = str(item.get("action", "") or "")
+            fee_source = str(item.get("fee_source", "") or "")
+            if action.startswith(trade_actions):
+                continue
+            if "[资金管理]" not in fee_source and not any(key in action for key in ("划拨", "划入", "划出", "重置")):
+                continue
+            date_key = str(item.get("date", "") or "")
+            if not date_key:
+                continue
+            flows[date_key] = round(flows.get(date_key, 0.0) + float(item.get("amount", 0.0) or 0.0), 2)
+        return flows
+
+    @staticmethod
+    def _find_likely_external_flow_date(rows: List[Dict[str, Any]], missing_flow: float) -> str:
+        best_date = ""
+        best_score = 0.0
+        prev_asset = float(rows[0].get("total_asset", 0.0) or 0.0)
+        for row in rows[1:]:
+            total_asset = float(row.get("total_asset", 0.0) or 0.0)
+            delta = round(total_asset - prev_asset, 2)
+            same_direction = (missing_flow > 0 and delta > 0) or (missing_flow < 0 and delta < 0)
+            if same_direction:
+                score = abs(delta)
+                if score > best_score and score >= max(abs(missing_flow) * 0.5, 5000.0):
+                    best_score = score
+                    best_date = str(row.get("date", "") or "")
+            prev_asset = total_asset
+        return best_date
 
     def _fetch_realtime_price(self, code: str) -> float:
         try:

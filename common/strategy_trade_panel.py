@@ -431,7 +431,6 @@ class StrategyTradePanel(QWidget):
             return
 
         curve = [float(item.get("cumulative_return_pct", 0.0) or 0.0) for item in rows]
-        assets = [float(item.get("total_asset", 0.0) or 0.0) for item in rows]
         x_values = list(range(len(curve)))
         bg, text, grid, accent = self._plot_colors()
         self.equity_plot.setBackground(bg)
@@ -452,13 +451,12 @@ class StrategyTradePanel(QWidget):
         )
         self.equity_plot.addLine(y=0, pen=pg.mkPen(grid, style=Qt.PenStyle.DashLine))
 
-        peak_asset = assets[0] if assets else 0.0
+        peak_return = curve[0] if curve else 0.0
         max_drawdown = 0.0
-        for total_asset in assets:
-            peak_asset = max(peak_asset, total_asset)
-            if peak_asset > 0:
-                drawdown = (total_asset - peak_asset) / peak_asset * 100
-                max_drawdown = min(max_drawdown, drawdown)
+        for return_pct in curve:
+            peak_return = max(peak_return, return_pct)
+            drawdown = return_pct - peak_return
+            max_drawdown = min(max_drawdown, drawdown)
 
         self.lbl_curve_latest.setText(f"{float(rows[-1].get('total_asset', 0.0) or 0.0):,.2f}")
         latest_return = float(rows[-1].get("cumulative_return_pct", 0.0) or 0.0)
