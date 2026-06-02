@@ -320,6 +320,8 @@ class StrategyPositionSnapshot:
     volume: int = 0
     can_use_volume: int = 0
     open_price: float = 0.0
+    cost_price: float = 0.0
+    cost_amount: float = 0.0
     market_value: float = 0.0
     created_at: str = ""
 
@@ -1629,7 +1631,18 @@ class TradeRecordService(QObject):
         conn = self._get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute('DELETE FROM strategy_position_snapshots WHERE snapshot_date = ?', (snapshot_date,))
+            strategy_ids = [
+                str(strategy_id or "").strip()
+                for strategy_id in (positions_by_strategy or {}).keys()
+                if str(strategy_id or "").strip()
+            ]
+            if not strategy_ids:
+                return 0
+            placeholders = ",".join("?" for _ in strategy_ids)
+            cursor.execute(
+                f"DELETE FROM strategy_position_snapshots WHERE snapshot_date = ? AND strategy_id IN ({placeholders})",
+                [snapshot_date, *strategy_ids],
+            )
             for strategy_id, payload in (positions_by_strategy or {}).items():
                 strategy_name = str(payload.get("strategy_name", "") or "")
                 virtual_account_id = str(payload.get("virtual_account_id", "") or "")
@@ -1640,13 +1653,21 @@ class TradeRecordService(QObject):
                     stock_code = str(pos.get("stock_code", "") or "").split(".")[0]
                     if not stock_code:
                         continue
+                    cost_price = round(
+                        float(pos.get("cost_price", pos.get("avg_cost", 0)) or 0),
+                        4,
+                    )
+                    cost_amount = round(
+                        float(pos.get("cost_amount", 0) or (cost_price * volume)),
+                        2,
+                    )
                     cursor.execute(
                         '''
                         INSERT INTO strategy_position_snapshots (
                             snapshot_date, strategy_id, strategy_name, virtual_account_id,
                             stock_code, stock_name, volume, can_use_volume, open_price,
-                            market_value, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            cost_price, cost_amount, market_value, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''',
                         (
                             snapshot_date,
@@ -1657,7 +1678,9 @@ class TradeRecordService(QObject):
                             pos.get("stock_name", "") or stock_code,
                             volume,
                             int(pos.get("can_use_volume", 0) or 0),
-                            round(float(pos.get("open_price", 0) or 0), 4),
+                            cost_price,
+                            cost_price,
+                            cost_amount,
                             round(float(pos.get("market_value", 0) or 0), 2),
                             now,
                         ),
@@ -3414,6 +3437,8 @@ class TradeRecordService(QObject):
                 volume INTEGER DEFAULT 0,
                 can_use_volume INTEGER DEFAULT 0,
                 open_price REAL DEFAULT 0,
+                cost_price REAL DEFAULT 0,
+                cost_amount REAL DEFAULT 0,
                 market_value REAL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 UNIQUE(snapshot_date, strategy_id, stock_code)
@@ -3445,6 +3470,8 @@ class TradeRecordService(QObject):
         self._ensure_column(cursor, 'strategy_daily_pnl', 'realized_pnl', "REAL DEFAULT 0")
         self._ensure_column(cursor, 'strategy_daily_pnl', 'unrealized_pnl', "REAL DEFAULT 0")
         self._ensure_column(cursor, 'strategy_daily_pnl', 'total_pnl', "REAL DEFAULT 0")
+        self._ensure_column(cursor, 'strategy_position_snapshots', 'cost_price', "REAL DEFAULT 0")
+        self._ensure_column(cursor, 'strategy_position_snapshots', 'cost_amount', "REAL DEFAULT 0")
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_strategy_pnl_date ON strategy_daily_pnl(snapshot_date)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_strategy_pnl_id ON strategy_daily_pnl(strategy_id)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_strategy_position_date ON strategy_position_snapshots(snapshot_date)')

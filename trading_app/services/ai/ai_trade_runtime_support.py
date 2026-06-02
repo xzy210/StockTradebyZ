@@ -18,6 +18,12 @@ from trading_app.indicators import attach_all_indicators
 from trading_app.services.agent_evidence_service import TEMP_KLINE_PREFIX
 from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
 from trading_app.services.realtime_snapshot_service import load_symbol_view
+from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+from trading_app.services.strategy_constants import (
+    AI_STOCK_STRATEGY_ID,
+    AI_STOCK_STRATEGY_NAME,
+    AI_STOCK_VIRTUAL_ACCOUNT_ID,
+)
 from trading_app.widgets.kline_widget import KLineWidget
 
 
@@ -182,14 +188,20 @@ class AITradeRuntimeSupport:
         try:
             asset = self.broker.query_stock_asset()
             positions = self.broker.query_stock_positions() or []
+            state_positions = get_strategy_budget_service().get_strategy_state_record(
+                AI_STOCK_STRATEGY_ID,
+                strategy_name=AI_STOCK_STRATEGY_NAME,
+                virtual_account_id=AI_STOCK_VIRTUAL_ACCOUNT_ID,
+            ).get_positions()
             top_positions = []
             for pos in positions[:5]:
                 code = str(getattr(pos, "stock_code", "") or "")
                 simple_code = self._plain_code(code)
+                budget_pos = state_positions.get(simple_code)
                 top_positions.append({
                     "code": simple_code,
                     "volume": int(getattr(pos, "volume", 0) or 0),
-                    "cost_price": float(getattr(pos, "open_price", 0.0) or 0.0),
+                    "cost_price": float(getattr(budget_pos, "avg_cost", 0.0) or 0.0),
                     "market_value": float(getattr(pos, "market_value", 0.0) or 0.0),
                 })
             return {

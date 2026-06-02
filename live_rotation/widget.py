@@ -522,7 +522,7 @@ class ETFRotationLiveWidget(QWidget):
                     {
                         "stock_code": legacy_holding,
                         "volume": legacy_quantity,
-                        "open_price": legacy_buy_price,
+                        "cost_price": legacy_buy_price,
                     }
                 ],
                 clear_reservations=True,

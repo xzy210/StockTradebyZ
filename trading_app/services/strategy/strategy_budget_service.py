@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from common.io_utils import atomic_write_json
 
 from trading_app.services.strategy_constants import (
+    AI_STOCK_STRATEGY_ID,
     OWNER_TYPE_UNMANAGED,
     UNMANAGED_STRATEGY_ID,
     UNMANAGED_STRATEGY_NAME,
@@ -415,6 +416,10 @@ class StrategyBudgetService:
             virtual_account_id=virtual_account_id,
             real_total_asset=real_total_asset,
         )
+        state = self._refresh_accounting_from_trade_records_if_needed(
+            state,
+            virtual_account_id=virtual_account_id,
+        )
         cfg = self._configs.get(strategy_id)
         return {
             "strategy_id": state.strategy_id,
@@ -612,6 +617,8 @@ class StrategyBudgetService:
                             "volume": int(p.get("quantity", 0) or 0),
                             "can_use_volume": int(p.get("quantity", 0) or 0),
                             "open_price": float(p.get("avg_cost", 0.0) or 0.0),
+                            "cost_price": float(p.get("avg_cost", 0.0) or 0.0),
+                            "cost_amount": float(p.get("cost_amount", 0.0) or 0.0),
                             "market_value": float(p.get("market_value", 0.0) or 0.0),
                         }
                         for p in positions_view
@@ -699,6 +706,10 @@ class StrategyBudgetService:
             strategy_name=strategy_name,
             virtual_account_id=virtual_account_id,
             real_total_asset=real_total_asset,
+        )
+        state = self._refresh_accounting_from_trade_records_if_needed(
+            state,
+            virtual_account_id=virtual_account_id,
         )
 
         price_map: Dict[str, float] = {}
@@ -814,6 +825,10 @@ class StrategyBudgetService:
             strategy_name=strategy_name,
             virtual_account_id=virtual_account_id,
             real_total_asset=real_total_asset,
+        )
+        state = self._refresh_accounting_from_trade_records_if_needed(
+            state,
+            virtual_account_id=virtual_account_id,
         )
         cfg = self._configs.get(strategy_id)
         is_unmanaged = bool(getattr(cfg, "is_unmanaged", False))
@@ -995,7 +1010,7 @@ class StrategyBudgetService:
         if not strategy_id:
             return None
         try:
-            from .trade_record_service import TradeDirection, get_trade_record_service
+            from trading_app.services.trade_record_service import TradeDirection, get_trade_record_service
 
             records = get_trade_record_service().get_records(
                 strategy_id=strategy_id,
@@ -1091,6 +1106,98 @@ class StrategyBudgetService:
             "trade_history": trade_history,
         }
 
+    def _refresh_accounting_from_trade_records_if_needed(
+        self,
+        state: StrategyBudgetState,
+        *,
+        virtual_account_id: str = "",
+    ) -> StrategyBudgetState:
+        """AI 股票策略以成交记录作为成本和已实现盈亏的最终口径。"""
+        strategy_id = (state.strategy_id or "").strip()
+        if strategy_id != AI_STOCK_STRATEGY_ID:
+            return state
+
+        replayed = self._build_trade_record_replay(
+            state,
+            virtual_account_id=virtual_account_id or state.virtual_account_id,
+        )
+        if not replayed:
+            return state
+
+        replayed_positions = dict(replayed.get("positions") or {})
+        replayed_cash = round(float(replayed.get("cash_balance", 0.0) or 0.0), 2)
+        replayed_realized = round(float(replayed.get("realized_pnl", 0.0) or 0.0), 2)
+        replayed_history = list(replayed.get("trade_history") or [])
+
+        current_cash = round(float(state.cash_balance or 0.0), 2)
+        current_realized = round(float(state.realized_pnl or 0.0), 2)
+        if (
+            dict(state.positions or {}) == replayed_positions
+            and abs(current_cash - replayed_cash) < 0.01
+            and abs(current_realized - replayed_realized) < 0.01
+            and len(state.trade_history or []) == len(replayed_history)
+        ):
+            return state
+
+        state.positions = replayed_positions
+        state.cash_balance = replayed_cash
+        state.realized_pnl = replayed_realized
+        state.trade_history = replayed_history
+        state.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._states[strategy_id] = state
+        self._save_states()
+        logger.info(
+            "已按成交记录刷新 AI 策略账本: positions=%d realized_pnl=%.2f",
+            len(replayed_positions),
+            replayed_realized,
+        )
+        self._save_current_position_cost_snapshot(state)
+        return state
+
+    def _save_current_position_cost_snapshot(self, state: StrategyBudgetState) -> None:
+        """把当前策略持仓成本落到 SQLite 快照表。
+
+        策略持仓成本只取本地账本 avg_cost；没有实时行情时 market_value
+        使用成本金额占位，避免借用券商 open_price。
+        """
+        strategy_id = (state.strategy_id or "").strip()
+        if not strategy_id:
+            return
+        positions = []
+        for code, pos in state.get_positions().items():
+            quantity = int(pos.quantity or 0)
+            if quantity <= 0:
+                continue
+            cost_price = float(pos.avg_cost or 0.0)
+            cost_amount = round(cost_price * quantity, 2)
+            positions.append(
+                {
+                    "stock_code": code,
+                    "stock_name": code,
+                    "volume": quantity,
+                    "can_use_volume": quantity,
+                    "open_price": cost_price,
+                    "cost_price": cost_price,
+                    "cost_amount": cost_amount,
+                    "market_value": cost_amount,
+                }
+            )
+        try:
+            from trading_app.services.trade_record_service import get_trade_record_service
+
+            get_trade_record_service().save_strategy_position_snapshots(
+                datetime.now().strftime("%Y-%m-%d"),
+                {
+                    strategy_id: {
+                        "strategy_name": state.strategy_name,
+                        "virtual_account_id": state.virtual_account_id,
+                        "positions": positions,
+                    }
+                },
+            )
+        except Exception as exc:
+            logger.debug("保存策略持仓成本快照失败: %s", exc)
+
     def _rehydrate_from_trade_records_if_needed(
         self,
         state: StrategyBudgetState,
@@ -1146,7 +1253,10 @@ class StrategyBudgetService:
             real_total_asset=real_total_asset,
         )
         return self._rehydrate_from_trade_records_if_needed(
-            state,
+            self._refresh_accounting_from_trade_records_if_needed(
+                state,
+                virtual_account_id=virtual_account_id,
+            ),
             strategy_name=strategy_name,
             virtual_account_id=virtual_account_id,
             real_total_asset=real_total_asset,
@@ -1160,7 +1270,7 @@ class StrategyBudgetService:
         virtual_account_id: str = "",
     ) -> Dict[str, float]:
         try:
-            from .trade_record_service import TradeDirection, get_trade_record_service
+            from trading_app.services.trade_record_service import TradeDirection, get_trade_record_service
 
             records = get_trade_record_service().get_records(
                 strategy_id=strategy_id,
@@ -1491,6 +1601,7 @@ class StrategyBudgetService:
         state.positions[code] = position.to_dict()
         state.updated_at = position.updated_at
         self._save_states()
+        self._save_current_position_cost_snapshot(state)
 
     def commit_sell(
         self,
@@ -1555,6 +1666,7 @@ class StrategyBudgetService:
         )
         state.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._save_states()
+        self._save_current_position_cost_snapshot(state)
 
     def sync_strategy_positions(
         self,
@@ -1584,7 +1696,12 @@ class StrategyBudgetService:
             if not code or volume <= 0:
                 continue
             broker_codes.add(code)
-            avg_cost = float(item.get("open_price", 0) or 0.0)
+            existing_position = state.get_positions().get(code)
+            # 成本只允许来自本地账本或成交记录回放，不能用券商 open_price 兜底。
+            avg_cost = float(getattr(existing_position, "avg_cost", 0.0) or 0.0)
+            explicit_cost = float(item.get("cost_price", item.get("avg_cost", 0.0)) or 0.0)
+            if avg_cost <= 0 and explicit_cost > 0:
+                avg_cost = explicit_cost
             if code in trade_cost_map:
                 avg_cost = trade_cost_map[code]
             new_positions[code] = StrategyPositionState(
@@ -1607,6 +1724,7 @@ class StrategyBudgetService:
             state.reserved_cash = 0.0
         state.updated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._save_states()
+        self._save_current_position_cost_snapshot(state)
 
     def list_strategy_snapshots(
         self,
@@ -1638,11 +1756,15 @@ class StrategyBudgetService:
             virtual_account_id=virtual_account_id,
             real_total_asset=real_total_asset,
         )
-        return self._rehydrate_from_trade_records_if_needed(
+        state = self._rehydrate_from_trade_records_if_needed(
             state,
             strategy_name=strategy_name,
             virtual_account_id=virtual_account_id,
             real_total_asset=real_total_asset,
+        )
+        return self._refresh_accounting_from_trade_records_if_needed(
+            state,
+            virtual_account_id=virtual_account_id,
         )
 
     def save_strategy_state_record(self, state: StrategyBudgetState) -> None:
@@ -1780,7 +1902,7 @@ class StrategyBudgetService:
             claimed_qty[code]  = Σ(非 unmanaged 策略在该 code 上的持仓量)
             unmanaged_cash     = max(broker_cash - claimed_cash, 0)
             unmanaged_positions[code] =
-                max(broker_qty[code] - claimed_qty[code], 0) 股，avg_cost 取券商 open_price
+                max(broker_qty[code] - claimed_qty[code], 0) 股，avg_cost 只取成交回放或既有账本成本
 
         不改动其它策略的字段；仅重写 unmanaged 策略的 cash_balance / positions。
         返回摘要 dict 用于日志和调试。
@@ -1810,16 +1932,12 @@ class StrategyBudgetService:
                 claimed_qty[code] = claimed_qty.get(code, 0) + qty
 
         broker_qty: Dict[str, float] = {}
-        broker_cost: Dict[str, float] = {}
         for item in broker_positions or []:
             code = normalize_symbol_code(str(item.get("stock_code", "") or ""))
             volume = int(item.get("volume", 0) or 0)
             if not code or volume <= 0:
                 continue
             broker_qty[code] = broker_qty.get(code, 0) + volume
-            cost = float(item.get("open_price", 0.0) or 0.0)
-            if cost > 0:
-                broker_cost[code] = cost
 
         unmanaged_state = self._states[unmanaged_id]
         previous_unmanaged_positions = unmanaged_state.get_positions()
@@ -1844,11 +1962,10 @@ class StrategyBudgetService:
                 continue
             derived_cost = float(getattr(replayed_unmanaged_positions.get(code), "avg_cost", 0.0) or 0.0)
             previous_cost = float(getattr(previous_unmanaged_positions.get(code), "avg_cost", 0.0) or 0.0)
-            broker_side_cost = float(broker_cost.get(code, 0.0) or 0.0)
             new_positions[code] = StrategyPositionState(
                 symbol_code=code,
                 quantity=unclaimed,
-                avg_cost=derived_cost or previous_cost or broker_side_cost,
+                avg_cost=derived_cost or previous_cost,
             ).to_dict()
 
         cash_diff = round(float(broker_cash or 0.0) - claimed_cash, 2)
@@ -1887,7 +2004,7 @@ class StrategyBudgetService:
         released_unmanaged_codes: List[str] = []
         skipped_unmanaged_claims: List[str] = []
         try:
-            from .strategy_registry_service import get_strategy_registry_service
+            from trading_app.services.strategy_registry_service import get_strategy_registry_service
 
             registry = get_strategy_registry_service()
             current_unmanaged_codes = {

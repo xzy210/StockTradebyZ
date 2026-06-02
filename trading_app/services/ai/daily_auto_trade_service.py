@@ -362,10 +362,7 @@ class DailyAutoTradeService(QObject):
                 return False, "保存日终快照失败"
             position_snapshot_count = self.trade_service.save_daily_position_snapshots(snapshot_date, positions)
             strategy_positions = self._build_strategy_position_payloads(positions)
-            strategy_position_snapshot_count = self.trade_service.save_strategy_position_snapshots(
-                snapshot_date,
-                strategy_positions,
-            )
+            strategy_position_snapshot_count = 0
             logger.info(
                 "日终对账快照保存完成: slot=%s position_snapshots=%d strategy_position_snapshot_rows=%d",
                 slot,
@@ -382,8 +379,37 @@ class DailyAutoTradeService(QObject):
                 strategy_id = str(snapshot_item.get("strategy_id", "") or "")
                 if strategy_id:
                     strategy_ids.add(strategy_id)
+            has_new_trade_records = (
+                inferred_trades_synced > 0
+                or local_order_record_trades_synced > 0
+                or broker_trades_synced > 0
+            )
+            if has_new_trade_records or AI_STOCK_STRATEGY_ID in strategy_ids:
+                for strategy_id in sorted(strategy_ids):
+                    if not strategy_id:
+                        continue
+                    if not has_new_trade_records and strategy_id != AI_STOCK_STRATEGY_ID:
+                        continue
+                    position_payload = strategy_positions.get(strategy_id, {})
+                    trade_row = strategy_trade_rows.get(strategy_id, {})
+                    strategy_name = str(position_payload.get("strategy_name", "") or "")
+                    virtual_account_id = str(
+                        position_payload.get("virtual_account_id", "")
+                        or trade_row.get("virtual_account_id", "")
+                        or ""
+                    )
+                    try:
+                        self.strategy_budget.rebuild_strategy_state_from_trade_records(
+                            strategy_id,
+                            strategy_name=strategy_name,
+                            virtual_account_id=virtual_account_id,
+                            real_total_asset=float(getattr(asset, "total_asset", 0) or 0),
+                        )
+                    except Exception as exc:
+                        logger.warning("日终对账重建策略账本失败: strategy=%s error=%s", strategy_id, exc)
             strategy_daily_pnl_count = 0
             strategy_trade_summary_count = 0
+            strategy_position_snapshot_payloads: Dict[str, Dict[str, Any]] = {}
             logger.info(
                 "日终对账开始生成策略快照: slot=%s strategy_count=%d",
                 slot,
@@ -404,6 +430,12 @@ class DailyAutoTradeService(QObject):
                     real_total_asset=float(getattr(asset, "total_asset", 0) or 0),
                     clear_reservations=True,
                 )
+                state = self.strategy_budget.get_strategy_state_record(
+                    strategy_id,
+                    strategy_name=strategy_name,
+                    virtual_account_id=virtual_account_id,
+                    real_total_asset=float(getattr(asset, "total_asset", 0) or 0),
+                )
                 budget_snapshot = self.strategy_budget.get_strategy_snapshot(
                     strategy_id,
                     strategy_name=strategy_name,
@@ -416,12 +448,6 @@ class DailyAutoTradeService(QObject):
                 )
                 cash_balance = float(budget_snapshot.get("cash_balance", 0.0) or 0.0)
                 if strategy_id == AI_STOCK_STRATEGY_ID:
-                    state = self.strategy_budget.get_strategy_state_record(
-                        strategy_id,
-                        strategy_name=strategy_name,
-                        virtual_account_id=virtual_account_id,
-                        real_total_asset=float(getattr(asset, "total_asset", 0) or 0),
-                    )
                     invested_cost = round(
                         sum(
                             float(getattr(pos, "avg_cost", 0.0) or 0.0) * int(getattr(pos, "quantity", 0) or 0)
@@ -463,6 +489,34 @@ class DailyAutoTradeService(QObject):
                 )
                 if trade_summary is not None:
                     strategy_trade_summary_count += 1
+                live_position_map = {
+                    self._plain_code(str(item.get("stock_code", "") or "")): item
+                    for item in list(position_payload.get("positions", []) or [])
+                    if self._plain_code(str(item.get("stock_code", "") or ""))
+                }
+                strategy_position_snapshot_payloads[strategy_id] = {
+                    "strategy_name": str(budget_snapshot.get("strategy_name", "") or strategy_name),
+                    "virtual_account_id": str(budget_snapshot.get("virtual_account_id", "") or virtual_account_id),
+                    "positions": [
+                        {
+                            "stock_code": code,
+                            "stock_name": str(live_position_map.get(code, {}).get("stock_name", "") or code),
+                            "volume": int(pos.quantity or 0),
+                            "can_use_volume": int(live_position_map.get(code, {}).get("can_use_volume", 0) or 0),
+                            "open_price": float(pos.avg_cost or 0.0),
+                            "cost_price": float(pos.avg_cost or 0.0),
+                            "cost_amount": round(float(pos.avg_cost or 0.0) * int(pos.quantity or 0), 2),
+                            "market_value": float(live_position_map.get(code, {}).get("market_value", 0.0) or 0.0),
+                        }
+                        for code, pos in state.get_positions().items()
+                        if int(pos.quantity or 0) > 0
+                    ],
+                }
+            if strategy_position_snapshot_payloads:
+                strategy_position_snapshot_count = self.trade_service.save_strategy_position_snapshots(
+                    snapshot_date,
+                    strategy_position_snapshot_payloads,
+                )
             broker_order_ids = [int(getattr(order, "order_id", 0) or 0) for order in orders if int(getattr(order, "order_id", 0) or 0) > 0]
             broker_trade_ids = [int(getattr(trade, "traded_id", 0) or 0) for trade in broker_trades if int(getattr(trade, "traded_id", 0) or 0) > 0]
             matched_order_records = self.trade_service.count_order_records_by_broker_ids(broker_order_ids)

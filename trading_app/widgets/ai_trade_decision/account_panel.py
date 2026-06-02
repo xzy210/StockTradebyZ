@@ -932,12 +932,19 @@ class AccountPanel(QWidget):
             asset = self.broker.query_stock_asset()
             positions = self.broker.query_stock_positions() or []
             positions = self._filter_ai_strategy_positions(positions)
+            state_positions = self.strategy_budget.get_strategy_state_record(
+                AI_STOCK_STRATEGY_ID,
+                strategy_name=AI_STOCK_STRATEGY_NAME,
+                virtual_account_id=AI_STOCK_VIRTUAL_ACCOUNT_ID,
+            ).get_positions()
             top = []
             for p in positions:
+                code = self._plain_code(getattr(p, "stock_code", "") or "")
+                budget_pos = state_positions.get(code)
                 top.append({
-                    "code": getattr(p, "stock_code", ""),
+                    "code": code,
                     "volume": int(getattr(p, "volume", 0) or 0),
-                    "cost_price": float(getattr(p, "open_price", 0) or 0),
+                    "cost_price": float(getattr(budget_pos, "avg_cost", 0.0) or 0.0),
                     "market_value": float(getattr(p, "market_value", 0) or 0),
                 })
             return BrokerContext(
@@ -1006,16 +1013,22 @@ class AccountPanel(QWidget):
         except Exception:
             return []
 
+        state_positions = self.strategy_budget.get_strategy_state_record(
+            AI_STOCK_STRATEGY_ID,
+            strategy_name=AI_STOCK_STRATEGY_NAME,
+            virtual_account_id=AI_STOCK_VIRTUAL_ACCOUNT_ID,
+        ).get_positions()
         results: List[Dict[str, Any]] = []
         for pos in self._filter_ai_strategy_positions(positions):
             volume = int(getattr(pos, "volume", 0) or 0)
-            code = getattr(pos, "stock_code", "") or ""
+            code = self._plain_code(getattr(pos, "stock_code", "") or "")
+            budget_pos = state_positions.get(code)
             results.append({
                 "code": code,
                 "name": self._resolve_symbol_name(code, getattr(pos, "stock_name", "") or ""),
                 "volume": volume,
                 "can_use_volume": int(getattr(pos, "can_use_volume", 0) or 0),
-                "cost_price": float(getattr(pos, "open_price", 0) or 0),
+                "cost_price": float(getattr(budget_pos, "avg_cost", 0.0) or 0.0),
                 "market_value": float(getattr(pos, "market_value", 0) or 0),
                 "profit_rate": float(getattr(pos, "profit_rate", 0) or 0),
             })

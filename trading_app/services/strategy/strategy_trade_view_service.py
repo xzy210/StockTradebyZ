@@ -339,8 +339,6 @@ class StrategyTradeViewService:
             broker_can_use = int(broker_pos.get("can_use_volume", 0) or 0)
             can_use = min(quantity, broker_can_use) if broker_can_use > 0 else quantity
             avg_cost = float(getattr(budget_pos, "avg_cost", 0.0) or 0.0)
-            if avg_cost <= 0:
-                avg_cost = float(broker_pos.get("open_price", 0.0) or 0.0)
             stock_name = name_map.get(code) or str(broker_pos.get("stock_name", "") or "")
             realtime_price = self._fetch_realtime_price(code)
             broker_price = float(broker_pos.get("current_price", 0.0) or 0.0)

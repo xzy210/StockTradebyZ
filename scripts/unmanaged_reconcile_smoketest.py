@@ -25,8 +25,8 @@ from trading_app.services.strategy_constants import (
     OWNER_TYPE_UNMANAGED,
     UNMANAGED_STRATEGY_ID,
 )
-from trading_app.services.strategy_registry_service import StrategyRegistryService
-import trading_app.services.strategy_registry_service as registry_module
+from trading_app.services.strategy.strategy_registry_service import StrategyRegistryService
+import trading_app.services.strategy.strategy_registry_service as registry_module
 
 TEST_CODE = "600816"
 

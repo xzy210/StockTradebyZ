@@ -2241,7 +2241,7 @@ class MainWindow(QMainWindow):
                 top_positions.append({
                     "code": simple_code,
                     "volume": int(getattr(pos, "volume", 0) or 0),
-                    "cost_price": float(getattr(pos, "open_price", 0.0) or 0.0),
+                    "cost_price": 0.0,
                     "market_value": float(getattr(pos, "market_value", 0.0) or 0.0),
                 })
             return {
