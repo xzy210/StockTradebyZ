@@ -33,6 +33,7 @@ class StrategyTradeViewService:
         self.strategy_registry = get_strategy_registry_service()
         self.broker = get_broker_session_service()
         self._last_sync_at: Dict[str, datetime] = {}
+        self._last_broker_trade_query_at: Dict[str, datetime] = {}
 
     @staticmethod
     def _today_bounds() -> tuple[str, str, str]:
@@ -232,6 +233,46 @@ class StrategyTradeViewService:
         except Exception:
             return 0
 
+    def _orders_need_broker_trade_detail(self, orders: List[Any]) -> bool:
+        today = datetime.now().strftime("%Y-%m-%d")
+        for order in list(orders or []):
+            try:
+                order_id = int(getattr(order, "order_id", 0) or 0)
+                if order_id <= 0:
+                    continue
+                status = int(getattr(order, "order_status", 0) or 0)
+                traded_volume = int(getattr(order, "traded_volume", 0) or 0)
+                if status not in (52, 55, 56) and traded_volume <= 0:
+                    continue
+                stock_code = normalize_symbol_code(getattr(order, "stock_code", "") or "")
+                trade_date = self.trade_service._normalize_broker_time_to_date(
+                    getattr(order, "traded_time", None) or getattr(order, "order_time", None),
+                    today,
+                )
+                if not self.trade_service._is_order_synced(order_id, trade_date, stock_code):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _should_query_broker_trade_detail(
+        self,
+        ctx: StrategyTradeViewContext,
+        orders: List[Any],
+    ) -> bool:
+        if not self._orders_need_broker_trade_detail(orders):
+            return False
+        if self.broker.was_query_timeout_recently("券商成交", within_seconds=120.0):
+            return False
+        if self.broker.was_query_timeout_recently("券商成交回报", within_seconds=120.0):
+            return False
+        last_query = self._last_broker_trade_query_at.get(ctx.strategy_id)
+        now = datetime.now()
+        if last_query is not None and (now - last_query).total_seconds() < 30:
+            return False
+        self._last_broker_trade_query_at[ctx.strategy_id] = now
+        return True
+
     def sync_strategy_broker_records(
         self,
         strategy_id: str,
@@ -258,6 +299,7 @@ class StrategyTradeViewService:
         deduped_records = 0
         rebuilt_all = False
         needs_rebuild = False
+        orders: List[Any] = []
         try:
             deduped_records = self.trade_service.dedupe_trade_records_by_broker_order()
             needs_rebuild = deduped_records > 0
@@ -279,6 +321,27 @@ class StrategyTradeViewService:
                 strategy_id=ctx.strategy_id,
                 virtual_account_id=ctx.virtual_account_id,
             )
+        except Exception:
+            pass
+        try:
+            if self._should_query_broker_trade_detail(ctx, orders):
+                broker_trades = self._filter_trades_for_context(
+                    self.broker.query_stock_trades_safe(timeout_seconds=4.0) or [],
+                    ctx,
+                )
+                if (
+                    not broker_trades
+                    and not self.broker.was_query_timeout_recently("券商成交", within_seconds=2.0)
+                ):
+                    broker_trades = self._filter_trades_for_context(
+                        self.broker.query_stock_deals_safe(timeout_seconds=4.0) or [],
+                        ctx,
+                    )
+                broker_trades_synced = self.trade_service.sync_broker_trades(
+                    broker_trades,
+                    strategy_id=ctx.strategy_id,
+                    virtual_account_id=ctx.virtual_account_id,
+                )
         except Exception:
             pass
         try:

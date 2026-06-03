@@ -1145,11 +1145,51 @@ class TradeRecordService(QObject):
         strategy_id: str = "",
         virtual_account_id: str = "",
         intent_id: str = "",
+        broker_order_id: int = 0,
+        direction: str = "",
     ) -> tuple[str, str, str]:
         if strategy_id:
             return strategy_id, virtual_account_id, intent_id
+        broker_order_id = int(broker_order_id or 0)
+        if broker_order_id > 0:
+            try:
+                code = str(stock_code or "").split(".")[0]
+                conditions = [
+                    "broker_order_id = ?",
+                    "COALESCE(strategy_id, '') != ''",
+                ]
+                params: list[Any] = [broker_order_id]
+                if code:
+                    conditions.append("stock_code = ?")
+                    params.append(code)
+                normalized_direction = str(direction or "").strip().lower()
+                if normalized_direction:
+                    conditions.append("direction = ?")
+                    params.append(normalized_direction)
+                conn = self._get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    f"""
+                    SELECT strategy_id, virtual_account_id, intent_id
+                    FROM order_records
+                    WHERE {" AND ".join(conditions)}
+                    ORDER BY updated_at DESC, created_at DESC, id DESC
+                    LIMIT 1
+                    """,
+                    params,
+                )
+                row = cursor.fetchone()
+                conn.close()
+                if row is not None:
+                    return (
+                        str(row["strategy_id"] or ""),
+                        str(row["virtual_account_id"] or ""),
+                        intent_id or str(row["intent_id"] or ""),
+                    )
+            except Exception as exc:
+                logger.debug("按委托号推断策略归属失败: order_id=%s error=%s", broker_order_id, exc)
         try:
-            from .strategy_registry_service import get_strategy_registry_service
+            from trading_app.services.strategy_registry_service import get_strategy_registry_service
 
             owner = get_strategy_registry_service().get_owner(stock_code)
         except Exception:
@@ -1244,6 +1284,12 @@ class TradeRecordService(QObject):
         conn.close()
         return exists
     
+    @staticmethod
+    def _broker_field(item: Any, field: str, default: Any = None) -> Any:
+        if isinstance(item, dict):
+            return item.get(field, default)
+        return getattr(item, field, default)
+
     def sync_broker_trades(
         self,
         broker_trades: list,
@@ -1259,7 +1305,7 @@ class TradeRecordService(QObject):
         基于券商的 traded_id 进行去重，只新增不存在的记录。
         
         Args:
-            broker_trades: 券商成交回报列表，每个元素应有以下属性：
+            broker_trades: 券商成交回报列表，每个元素可以是对象或 dict：
                 - traded_id: 成交编号
                 - stock_code: 股票代码
                 - stock_name: 股票名称（可选）
@@ -1279,20 +1325,20 @@ class TradeRecordService(QObject):
         for trade in broker_trades:
             try:
                 # 获取成交ID（可能是字符串或整数）
-                traded_id_raw = getattr(trade, 'traded_id', 0)
+                traded_id_raw = self._broker_field(trade, 'traded_id', 0)
                 try:
                     traded_id = int(traded_id_raw) if traded_id_raw else 0
                 except (ValueError, TypeError):
                     traded_id = 0
                     
-                stock_code_raw = getattr(trade, 'stock_code', '')
+                stock_code_raw = self._broker_field(trade, 'stock_code', '')
                 
                 if traded_id <= 0:
                     continue
                 
                 # 检查是否已存在
                 trade_date = self._normalize_broker_time_to_date(
-                    getattr(trade, 'traded_time', None),
+                    self._broker_field(trade, 'traded_time', None),
                     today,
                 )
                 if self.is_trade_exists(traded_id, trade_date):
@@ -1300,18 +1346,24 @@ class TradeRecordService(QObject):
                 
                 # 解析交易数据
                 stock_code = str(stock_code_raw).split('.')[0]
-                stock_name = getattr(trade, 'stock_name', '') or stock_code
+                stock_name = self._broker_field(trade, 'stock_name', '') or stock_code
+                try:
+                    order_type = int(self._broker_field(trade, 'order_type', 0) or 0)
+                except (TypeError, ValueError):
+                    order_type = 0
+                direction = TradeDirection.BUY.value if order_type == 23 else TradeDirection.SELL.value
+                broker_order_id = int(self._broker_field(trade, 'order_id', 0) or 0)
                 inferred_strategy_id, inferred_virtual_account_id, inferred_intent_id = self._infer_strategy_identity(
                     stock_code,
                     strategy_id=strategy_id,
                     virtual_account_id=virtual_account_id,
                     intent_id=intent_id,
+                    broker_order_id=broker_order_id,
+                    direction=direction,
                 )
-                order_type = getattr(trade, 'order_type', 0)
-                direction = TradeDirection.BUY.value if order_type == 23 else TradeDirection.SELL.value
-                price = float(getattr(trade, 'traded_price', 0))
-                volume = int(getattr(trade, 'traded_volume', 0))
-                amount = float(getattr(trade, 'traded_amount', 0)) or round(price * volume, 2)
+                price = float(self._broker_field(trade, 'traded_price', 0))
+                volume = int(self._broker_field(trade, 'traded_volume', 0))
+                amount = float(self._broker_field(trade, 'traded_amount', 0)) or round(price * volume, 2)
                 
                 if price <= 0 or volume <= 0:
                     continue
@@ -1327,7 +1379,7 @@ class TradeRecordService(QObject):
                     direction=direction,
                     price=price,
                     volume=volume,
-                    broker_order_id=int(getattr(trade, 'order_id', 0) or 0),
+                    broker_order_id=broker_order_id,
                     trade_date=trade_date,
                     source=source,
                     strategy_id=inferred_strategy_id,
@@ -1406,11 +1458,18 @@ class TradeRecordService(QObject):
                 if self._is_order_synced(order_id, trade_date, stock_code):
                     continue
 
+                try:
+                    order_type = int(getattr(order, 'order_type', 0) or 0)
+                except (TypeError, ValueError):
+                    order_type = 0
+                direction = TradeDirection.BUY.value if order_type == 23 else TradeDirection.SELL.value
                 inferred_strategy_id, inferred_virtual_account_id, inferred_intent_id = self._infer_strategy_identity(
                     stock_code,
                     strategy_id=strategy_id,
                     virtual_account_id=virtual_account_id,
                     intent_id=intent_id,
+                    broker_order_id=int(order_id or 0),
+                    direction=direction,
                 )
                 
                 # 获取股票名称：优先从name_map获取，其次从委托数据，最后用xtdata
@@ -1426,9 +1485,6 @@ class TradeRecordService(QObject):
                         stock_name = detail.get('InstrumentName', stock_code) if detail else stock_code
                     except:
                         stock_name = stock_code
-                
-                order_type = getattr(order, 'order_type', 0)
-                direction = TradeDirection.BUY.value if order_type == 23 else TradeDirection.SELL.value
                 
                 # 成交价格和数量
                 price = float(getattr(order, 'traded_price', 0) or 0)
@@ -2745,7 +2801,7 @@ class TradeRecordService(QObject):
         按股票归属修正 broker_sync 成交记录的策略归属，避免账户级同步串到错误策略。
         """
         try:
-            from .strategy_registry_service import get_strategy_registry_service
+            from trading_app.services.strategy_registry_service import get_strategy_registry_service
 
             registry = get_strategy_registry_service()
         except Exception as exc:

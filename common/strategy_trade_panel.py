@@ -225,7 +225,22 @@ class StrategyTradePanel(QWidget):
         self._refresh_capital_ledger()
         self._refresh_equity_curve()
 
-    def _on_broker_trade(self, _trade_data: dict) -> None:
+    def _on_broker_trade(self, trade_data: dict) -> None:
+        try:
+            added = self.trade_service.sync_broker_trades(
+                [trade_data],
+                strategy_id=self.strategy_id,
+                virtual_account_id=self.virtual_account_id,
+            )
+            if added > 0:
+                self.view_service.strategy_budget.rebuild_strategy_state_from_trade_records(
+                    self.strategy_id,
+                    strategy_name=self.strategy_name,
+                    virtual_account_id=self.virtual_account_id,
+                    real_total_asset=0.0,
+                )
+        except Exception:
+            pass
         QTimer.singleShot(1500, lambda: self._refresh_after_broker_event(force_sync=True))
 
     def _on_broker_order(self, _order_data: dict) -> None:
