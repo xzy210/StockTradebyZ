@@ -16,8 +16,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import trading_app.services.execution.trade_record_service as trade_record_module
 from trading_app.services.strategy.strategy_budget_service import StrategyBudgetService
-from trading_app.services.strategy_constants import AI_STOCK_STRATEGY_ID, AI_STOCK_VIRTUAL_ACCOUNT_ID
-from trading_app.services.trade_record_service import TradeDirection, TradeRecordService
+from trading_app.services.strategy.strategy_constants import AI_STOCK_STRATEGY_ID, AI_STOCK_VIRTUAL_ACCOUNT_ID
+from trading_app.services.execution.trade_record_service import TradeDirection, TradeRecordService
 
 
 STRATEGY_ID = AI_STOCK_STRATEGY_ID

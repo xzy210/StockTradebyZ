@@ -12,10 +12,10 @@ from common.strategy_spec import StrategySpec
 from trading_app.services.live_strategy_center.strategy_adapter import PanelLiveStrategyAdapter
 from trading_app.services.live_strategy_center.hub_controller import LiveStrategyHubController
 from trading_app.services.live_strategy_center.strategy_plugin import LiveStrategyPlugin
-from trading_app.services.strategy_budget_service import StrategyBudgetService
-from trading_app.services.strategy_registry_service import StrategyRegistryService, get_strategy_registry_service
-from trading_app.services import strategy_spec_service
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_budget_service import StrategyBudgetService
+from trading_app.services.strategy.strategy_registry_service import StrategyRegistryService, get_strategy_registry_service
+from trading_app.services.strategy import strategy_spec_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 
 def _assert(condition: bool, message: str) -> None:

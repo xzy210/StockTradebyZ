@@ -16,8 +16,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from trading_app.services.strategy_budget_service import get_strategy_budget_service
-from trading_app.services.strategy_constants import (
+from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+from trading_app.services.strategy.strategy_constants import (
     AI_STOCK_STRATEGY_ID,
     AI_STOCK_STRATEGY_NAME,
     AI_STOCK_VIRTUAL_ACCOUNT_ID,

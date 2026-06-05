@@ -22,7 +22,7 @@ from common.kline_update_engine import (
     run_xtquant_daily_history_precheck,
     update_rotation_etf_pool,
 )
-from trading_app.services.data_update_result import DataUpdateResult
+from trading_app.services.market_data.data_update_result import DataUpdateResult
 
 logger = logging.getLogger(__name__)
 

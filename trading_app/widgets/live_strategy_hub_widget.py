@@ -28,9 +28,12 @@ from PyQt6.QtWidgets import (
 )
 
 from common.broker_connection_panel import BrokerConnectionPanel
-from trading_app.services.auto_trade_config_service import get_auto_trade_config_service
-from trading_app.services.live_strategy_end_of_day_service import LiveStrategyEndOfDayService
-from trading_app.services.live_strategy_logging import get_live_strategy_log_path
+from common.trading_runtime import get_live_trading_engine
+from trading_app.services.execution.live_event_persistence import LiveEventPersistenceHandler
+from trading_app.services.ai.auto_trade_config_service import get_auto_trade_config_service
+from trading_app.services.ops.live_strategy_end_of_day_service import LiveStrategyEndOfDayService
+from trading_app.services.live_event_qt_bridge import QtLiveEventBridge
+from trading_app.services.ops.live_strategy_logging import get_live_strategy_log_path
 from trading_app.services.live_strategy_center import (
     AlertEventService,
     HubStateService,
@@ -50,8 +53,8 @@ from trading_app.services.live_strategy_center.builtin_portfolio_plugins import 
 from trading_app.services.live_strategy_center.builtin_unmanaged_plugin import (
     create_unmanaged_position_review_plugin,
 )
-from trading_app.services.qmt_startup_orchestrator import QmtStartupOrchestrator
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.ops.qmt_startup_orchestrator import QmtStartupOrchestrator
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 from trading_app.widgets.live_strategy_account_settings_dialog import LiveStrategyAccountSettingsDialog
 from trading_app.widgets.live_strategy_alert_center_widget import LiveStrategyAlertCenterWidget
 from trading_app.widgets.live_strategy_exception_order_widget import LiveStrategyExceptionOrderWidget
@@ -100,6 +103,10 @@ class LiveStrategyHubWidget(QWidget):
         layout.setSpacing(4)
 
         self.broker_panel = BrokerConnectionPanel(self)
+        self.live_trading_engine = get_live_trading_engine(broker_service=self.broker_panel.broker)
+        self.live_event_persistence = LiveEventPersistenceHandler(self.live_trading_engine.event_engine)
+        self.live_event_persistence.start()
+        self.live_event_bridge = QtLiveEventBridge(self.live_trading_engine.event_engine, self)
 
         eod_bar = QWidget(self)
         eod_layout = QHBoxLayout(eod_bar)
@@ -218,6 +225,7 @@ class LiveStrategyHubWidget(QWidget):
 
         self.center_storage = get_live_strategy_center_storage()
         self.alert_event_service = AlertEventService(self.center_storage, self)
+        self.live_event_bridge.events_changed.connect(self.alert_event_service.events_changed.emit)
         self.task_orchestrator_service = TaskOrchestratorService(self.center_storage, self)
         self.hub_state_service = HubStateService(self)
         self._auto_trade_config_service = get_auto_trade_config_service()
@@ -1063,6 +1071,11 @@ class LiveStrategyHubWidget(QWidget):
         )
 
     def closeEvent(self, event) -> None:
+        try:
+            self.live_event_bridge.stop()
+            self.live_event_persistence.stop()
+        except Exception:
+            pass
         try:
             self.startup_orchestrator.cancel()
         except Exception:

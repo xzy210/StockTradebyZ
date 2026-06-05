@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from common.market_data_policy import is_etf_like_code
-from trading_app.services.market_data_status_service import get_market_data_status_service
-from trading_app.services.trade_decision_models import RiskCheckResult, TradeAction, TradeDecision
+from trading_app.services.market_data.market_data_status_service import get_market_data_status_service
+from trading_app.services.ai.trade_decision_models import RiskCheckResult, TradeAction, TradeDecision
 
 logger = logging.getLogger(__name__)
 

@@ -12,12 +12,12 @@ from datetime import datetime
 from dataclasses import dataclass, field, asdict
 from typing import Optional, List, Dict
 
-from trading_app.services.strategy_budget_service import (
+from trading_app.services.strategy.strategy_budget_service import (
     StrategyBudgetState,
     get_strategy_budget_service,
 )
-from trading_app.services.strategy_constants import normalize_symbol_code
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_constants import normalize_symbol_code
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 logger = logging.getLogger(__name__)
 

@@ -9,7 +9,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from common.broker_session_service import BrokerSessionService
 from common.qmt_client_service import QmtClientService
 
-from trading_app.services.data_freshness_service import evaluate_xtquant_data_freshness
+from trading_app.services.market_data.data_freshness_service import evaluate_xtquant_data_freshness
 
 logger = logging.getLogger(__name__)
 

@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QDate, pyqtSignal
 from PyQt6.QtGui import QColor, QBrush, QFont
 
-from trading_app.services.trade_record_service import (
+from trading_app.services.execution.trade_record_service import (
     get_trade_record_service, TradeRecord, TradeDirection, TradeSource,
     TradeAuditReport,
 )

@@ -34,7 +34,7 @@ def _make_bold_font() -> QFont:
 
 # 导入板块服务
 try:
-    from trading_app.services.sector_service import (
+    from trading_app.services.market_data.sector_service import (
         get_sector_service, SectorService, SectorData, 
         SECTOR_TYPES, HAS_XTQUANT
     )

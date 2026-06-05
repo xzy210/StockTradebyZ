@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from trading_app.services.live_strategy_end_of_day_service import LiveStrategyEndOfDayService
+from trading_app.services.ops.live_strategy_end_of_day_service import LiveStrategyEndOfDayService
 
 
 class _EndOfDayWorker(QThread):
@@ -38,7 +38,7 @@ class _KlineRefreshWorker(QThread):
 
     def run(self) -> None:
         try:
-            from trading_app.services.kline_full_refresh_service import KlineFullRefreshService
+            from trading_app.services.market_data.kline_full_refresh_service import KlineFullRefreshService
 
             service = KlineFullRefreshService(rotation_etf_pool=self.rotation_etf_pool)
             success, message = service.run_full_refresh(status_cb=self.status_message.emit)

@@ -22,14 +22,14 @@ from PyQt6.QtWidgets import (
 
 from common.broker_session_service import get_broker_session_service
 from common.strategy_panel_context import StrategyPanelContext
-from trading_app.services.strategy_constants import (
+from trading_app.services.strategy.strategy_constants import (
     AI_STOCK_STRATEGY_ID,
     AI_STOCK_STRATEGY_NAME,
     AI_STOCK_VIRTUAL_ACCOUNT_ID,
 )
-from trading_app.services.trade_decision_models import TradeAction, TradeDecision
-from trading_app.services.trade_execution_service import ExecutionRequest, get_trade_execution_service
-from trading_app.services.trade_record_service import TradeSource
+from trading_app.services.ai.trade_decision_models import TradeAction, TradeDecision
+from trading_app.services.execution.trade_execution_service import ExecutionRequest, get_trade_execution_service
+from trading_app.services.execution.trade_record_service import TradeSource
 
 logger = logging.getLogger(__name__)
 

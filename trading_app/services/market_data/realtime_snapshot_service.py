@@ -7,8 +7,8 @@ import pandas as pd
 
 from common.data_portal import get_data_portal
 
-from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
-from trading_app.services.quote_service import get_quote_service, to_xt_code
+from common.agent.decision_run_context import DecisionRunContext, build_decision_run_context
+from trading_app.services.market_data.quote_service import get_quote_service, to_xt_code
 
 logger = logging.getLogger(__name__)
 

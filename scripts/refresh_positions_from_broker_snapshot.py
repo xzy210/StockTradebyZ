@@ -45,7 +45,7 @@ def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(project_root))
 
-    from trading_app.services.strategy_budget_service import get_strategy_budget_service
+    from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
 
     svc = get_strategy_budget_service()
 

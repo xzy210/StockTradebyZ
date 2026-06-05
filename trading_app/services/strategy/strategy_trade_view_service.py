@@ -10,11 +10,11 @@ try:
 except ImportError:
     from common.broker_session_service import get_broker_session_service
 
-from trading_app.services.market_data_gateway import get_market_data_gateway
-from trading_app.services.strategy_budget_service import get_strategy_budget_service
-from trading_app.services.strategy_registry_service import get_strategy_registry_service
-from trading_app.services.trade_record_service import OrderRecord, TradeRecord, get_trade_record_service
-from trading_app.services.strategy_constants import AI_STOCK_STRATEGY_ID, normalize_symbol_code
+from trading_app.services.market_data.market_data_gateway import get_market_data_gateway
+from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
+from trading_app.services.execution.trade_record_service import OrderRecord, TradeRecord, get_trade_record_service
+from trading_app.services.strategy.strategy_constants import AI_STOCK_STRATEGY_ID, normalize_symbol_code
 
 logger = logging.getLogger(__name__)
 

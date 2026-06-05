@@ -8,7 +8,7 @@ from typing import Iterable, List, Optional
 
 from common.data_portal import get_data_portal
 from common.market_data_policy import latest_expected_trading_day, normalize_symbol_code
-from trading_app.services.market_data_gateway import get_market_data_gateway
+from trading_app.services.market_data.market_data_gateway import get_market_data_gateway
 
 logger = logging.getLogger(__name__)
 

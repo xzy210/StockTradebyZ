@@ -4,7 +4,7 @@ import logging
 
 from PyQt6.QtCore import QObject
 
-from trading_app.services.quote_service import QuoteData, get_quote_service
+from trading_app.services.market_data.quote_service import QuoteData, get_quote_service
 
 logger = logging.getLogger(__name__)
 

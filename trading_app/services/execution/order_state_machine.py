@@ -283,14 +283,15 @@ class OrderLifecycle:
 
 
 def normalize_order_state(order: Any) -> OrderStateSnapshot:
-    status_code = _to_int(getattr(order, "order_status", 0))
-    status_text = ORDER_STATUS_LABELS.get(status_code, str(status_code))
+    status_code = _to_int(getattr(order, "order_status", 0) or getattr(order, "status_code", 0))
+    status_value = getattr(order, "status", "")
+    status_text = ORDER_STATUS_LABELS.get(status_code, str(getattr(status_value, "value", status_value) or status_code))
     return OrderStateSnapshot(
         status_code=status_code,
         status_text=status_text,
-        status_message=str(getattr(order, "status_msg", "") or ""),
-        traded_volume=_to_int(getattr(order, "traded_volume", 0)),
-        traded_price=_to_float(getattr(order, "traded_price", 0)),
+        status_message=str(getattr(order, "status_msg", "") or getattr(order, "status_message", "") or ""),
+        traded_volume=_to_int(getattr(order, "traded_volume", 0) or getattr(order, "traded", 0)),
+        traded_price=_to_float(getattr(order, "traded_price", 0) or getattr(order, "price", 0)),
     )
 
 

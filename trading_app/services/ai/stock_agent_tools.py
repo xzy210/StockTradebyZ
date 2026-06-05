@@ -10,15 +10,15 @@ from typing import Any, Callable, Dict, List
 
 import pandas as pd
 
-from trading_app.services.agent_context_service import AgentRuntimeContext
-from trading_app.services.agent_watchlist_scan_service import AgentWatchlistScanService
-from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
-from trading_app.services.market_context_service import MarketContextService
-from trading_app.services.portfolio_risk_service import PortfolioRiskService
-from trading_app.services.realtime_snapshot_service import load_symbol_view
-from trading_app.services.stock_fundamental_service import StockFundamentalService
-from trading_app.services.stock_news_service import StockNewsService
-from trading_app.services.stock_analyzer import get_analyzer
+from common.agent.agent_context_service import AgentRuntimeContext
+from trading_app.services.ai.agent_watchlist_scan_service import AgentWatchlistScanService
+from common.agent.decision_run_context import DecisionRunContext, build_decision_run_context
+from trading_app.services.market_data.market_context_service import MarketContextService
+from trading_app.services.execution.portfolio_risk_service import PortfolioRiskService
+from trading_app.services.market_data.realtime_snapshot_service import load_symbol_view
+from trading_app.services.ai.stock_fundamental_service import StockFundamentalService
+from trading_app.services.ai.stock_news_service import StockNewsService
+from trading_app.services.ai.stock_analyzer import get_analyzer
 
 logger = logging.getLogger(__name__)
 

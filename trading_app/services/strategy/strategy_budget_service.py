@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 from common.io_utils import atomic_write_json
 
-from trading_app.services.strategy_constants import (
+from trading_app.services.strategy.strategy_constants import (
     AI_STOCK_STRATEGY_ID,
     OWNER_TYPE_UNMANAGED,
     UNMANAGED_STRATEGY_ID,
@@ -18,7 +18,7 @@ from trading_app.services.strategy_constants import (
     UNMANAGED_VIRTUAL_ACCOUNT_ID,
     normalize_symbol_code,
 )
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 logger = logging.getLogger(__name__)
 
@@ -519,7 +519,7 @@ class StrategyBudgetService:
         try:
             from .trade_record_service import get_trade_record_service
         except ImportError:  # 被其它包作为 top-level 导入时
-            from trading_app.services.trade_record_service import get_trade_record_service  # type: ignore
+            from trading_app.services.execution.trade_record_service import get_trade_record_service  # type: ignore
 
         trade_service = get_trade_record_service()
         snapshot_date = str(snapshot_date or datetime.now().strftime("%Y-%m-%d"))
@@ -1010,7 +1010,7 @@ class StrategyBudgetService:
         if not strategy_id:
             return None
         try:
-            from trading_app.services.trade_record_service import TradeDirection, get_trade_record_service
+            from trading_app.services.execution.trade_record_service import TradeDirection, get_trade_record_service
 
             records = get_trade_record_service().get_records(
                 strategy_id=strategy_id,
@@ -1183,7 +1183,7 @@ class StrategyBudgetService:
                 }
             )
         try:
-            from trading_app.services.trade_record_service import get_trade_record_service
+            from trading_app.services.execution.trade_record_service import get_trade_record_service
 
             get_trade_record_service().save_strategy_position_snapshots(
                 datetime.now().strftime("%Y-%m-%d"),
@@ -1270,7 +1270,7 @@ class StrategyBudgetService:
         virtual_account_id: str = "",
     ) -> Dict[str, float]:
         try:
-            from trading_app.services.trade_record_service import TradeDirection, get_trade_record_service
+            from trading_app.services.execution.trade_record_service import TradeDirection, get_trade_record_service
 
             records = get_trade_record_service().get_records(
                 strategy_id=strategy_id,
@@ -2019,7 +2019,7 @@ class StrategyBudgetService:
         released_unmanaged_codes: List[str] = []
         skipped_unmanaged_claims: List[str] = []
         try:
-            from trading_app.services.strategy_registry_service import get_strategy_registry_service
+            from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
 
             registry = get_strategy_registry_service()
             current_unmanaged_codes = {

@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
+from common.agent.decision_run_context import DecisionRunContext, build_decision_run_context
 
 from common.data_portal import get_data_portal
 from common.io_utils import atomic_write_json

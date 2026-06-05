@@ -22,31 +22,31 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from trading_app.services.agent_context_service import BrokerContext
-from trading_app.services.ai_stock_risk_policy import AIStockRiskPolicy
-from trading_app.services.auto_trade_config_service import AutoTradeConfig
-from trading_app.services.risk_guard_service import RiskGuardService
-from trading_app.services.strategy_constants import (
+from common.agent.agent_context_service import BrokerContext
+from trading_app.services.ai.ai_stock_risk_policy import AIStockRiskPolicy
+from trading_app.services.ai.auto_trade_config_service import AutoTradeConfig
+from trading_app.services.execution.risk_guard_service import RiskGuardService
+from trading_app.services.strategy.strategy_constants import (
     AI_STOCK_STRATEGY_ID,
     AI_STOCK_STRATEGY_NAME,
     AI_STOCK_VIRTUAL_ACCOUNT_ID,
 )
-from trading_app.services.strategy_risk import (
+from trading_app.services.strategy.strategy_risk import (
     StrategyRiskContext,
     get_strategy_risk_registry,
     reset_strategy_risk_registry,
 )
-from trading_app.services.trade_decision_models import (
+from trading_app.services.ai.trade_decision_models import (
     RiskCheckItem,
     RiskCheckResult,
     TradeAction,
     TradeDecision,
 )
-from trading_app.services.trade_execution_service import (
+from trading_app.services.execution.trade_execution_service import (
     ExecutionRequest,
     TradeExecutionService,
 )
-from trading_app.services.trade_record_service import TradeSource
+from trading_app.services.execution.trade_record_service import TradeSource
 
 
 def _build_decision(confidence: float = 0.8, action: str = TradeAction.BUY.value) -> TradeDecision:

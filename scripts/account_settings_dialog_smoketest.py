@@ -20,7 +20,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from PyQt6.QtWidgets import QApplication
 
-from trading_app.services.auto_trade_config_service import (
+from trading_app.services.ai.auto_trade_config_service import (
     AutoTradeConfig,
     AutoTradeConfigService,
 )

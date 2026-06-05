@@ -23,8 +23,8 @@ import threading
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer
 
-from trading_app.services.market_data_gateway import get_market_data_gateway, to_xt_code as gateway_to_xt_code
-from trading_app.services.market_data_policy import evaluate_tick_freshness
+from trading_app.services.market_data.market_data_gateway import get_market_data_gateway, to_xt_code as gateway_to_xt_code
+from trading_app.services.market_data.market_data_policy import evaluate_tick_freshness
 
 # 设置日志
 logger = logging.getLogger(__name__)

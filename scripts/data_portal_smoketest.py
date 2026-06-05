@@ -308,7 +308,7 @@ def main() -> None:
         assert overlay_bars is not None
         assert float(overlay_rotation_data.latest_close("159949")) == 1.25
 
-        from trading_app.services.index_service import load_index_data
+        from trading_app.services.market_data.index_service import load_index_data
 
         compat_index_df = load_index_data("000300", str(data_dir), start_date="2024-01-02", end_date="2024-01-03")
         assert compat_index_df is not None
@@ -629,7 +629,7 @@ def main() -> None:
         assert rotation_result["data_version"] == rotation_result["provenance"]["data_version"]
         json.dumps(rotation_result["serializable_result"], ensure_ascii=False)
 
-        from trading_app.services.trade_execution_service import TradeExecutionService
+        from trading_app.services.execution.trade_execution_service import TradeExecutionService
 
         live_service = TradeExecutionService.__new__(TradeExecutionService)
         live_service.broker = type(
@@ -675,7 +675,7 @@ def main() -> None:
             stock_cache.clear()
 
         from common.data_portal import set_data_portal
-        from trading_app.services.market_data_status_service import MarketDataStatusService
+        from trading_app.services.market_data.market_data_status_service import MarketDataStatusService
 
         set_data_portal(portal)
         try:

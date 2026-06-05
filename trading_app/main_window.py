@@ -45,9 +45,9 @@ from common.data_portal import get_data_portal, get_stock_cache
 from trading_app.indicators import attach_all_indicators
 from trading_app.data_updater import DataUpdateThread, ETFUpdateThread
 from trading_app.scheduler import ScheduledTaskManager
-from trading_app.services.agent_evidence_service import TEMP_KLINE_PREFIX
-from trading_app.services.quote_service import QuoteData
-from trading_app.services.data_update_result import DataUpdateResult
+from common.agent.agent_evidence_service import TEMP_KLINE_PREFIX
+from trading_app.services.market_data.quote_service import QuoteData
+from trading_app.services.market_data.data_update_result import DataUpdateResult
 
 
 class DataPreloadThread(QThread):

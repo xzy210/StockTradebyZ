@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
-from trading_app.services.quote_service import QuoteData, get_quote_service, to_xt_code
+from common.agent.decision_run_context import DecisionRunContext, build_decision_run_context
+from trading_app.services.market_data.quote_service import QuoteData, get_quote_service, to_xt_code
 
 logger = logging.getLogger(__name__)
 

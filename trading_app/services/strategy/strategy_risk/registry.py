@@ -14,7 +14,7 @@ from .models import (
 from .policy import NoopStrategyRiskPolicy, StrategyRiskPolicy
 
 if TYPE_CHECKING:  # pragma: no cover
-    from trading_app.services.trade_execution_service import ExecutionRequest
+    from trading_app.services.execution.trade_execution_service import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 

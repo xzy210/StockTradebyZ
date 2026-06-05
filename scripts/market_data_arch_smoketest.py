@@ -9,9 +9,9 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from trading_app.services.data_update_result import DataUpdateResult
-from trading_app.services.market_data_gateway import MarketDataGateway, to_xt_code
-from trading_app.services.market_data_policy import evaluate_tick_freshness, parse_tick_datetime
+from trading_app.services.market_data.data_update_result import DataUpdateResult
+from trading_app.services.market_data.market_data_gateway import MarketDataGateway, to_xt_code
+from trading_app.services.market_data.market_data_policy import evaluate_tick_freshness, parse_tick_datetime
 
 
 class FakeSeries:
@@ -158,8 +158,8 @@ def case_data_update_result() -> None:
 
 
 def case_full_market_etf_stale_is_non_blocking() -> None:
-    import trading_app.services.kline_full_refresh_service as refresh_module
-    from trading_app.services.kline_full_refresh_service import KlineFullRefreshService
+    import trading_app.services.market_data.kline_full_refresh_service as refresh_module
+    from trading_app.services.market_data.kline_full_refresh_service import KlineFullRefreshService
 
     class FakeBatchSummary:
         success = 1

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from trading_app.services.trade_decision_models import (
+from trading_app.services.ai.trade_decision_models import (
     DecisionOutcome,
     DecisionRecord,
     RiskCheckResult,

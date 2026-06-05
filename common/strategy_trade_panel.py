@@ -24,8 +24,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
 )
 
-from trading_app.services.strategy_trade_view_service import get_strategy_trade_view_service
-from trading_app.services.trade_record_service import get_trade_record_service
+from trading_app.services.strategy.strategy_trade_view_service import get_strategy_trade_view_service
+from trading_app.services.execution.trade_record_service import get_trade_record_service
 
 from common.broker_session_service import get_broker_session_service
 

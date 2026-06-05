@@ -9,8 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import numpy as np
 
-from trading_app.services.agent_context_service import BrokerContext
-from trading_app.services.trade_decision_models import (
+from common.agent.agent_context_service import BrokerContext
+from trading_app.services.ai.trade_decision_models import (
     RiskCheckItem,
     TradeAction,
     TradeDecision,

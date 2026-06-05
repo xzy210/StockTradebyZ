@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QTime
 
-from trading_app.services.strategy_risk import (
+from trading_app.services.strategy.strategy_risk import (
     RiskConfigField,
     is_configurable,
 )

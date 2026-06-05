@@ -31,15 +31,15 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from trading_app.services.strategy_budget_service import get_strategy_budget_service
-from trading_app.services.live_strategy_end_of_day_service import StrategyEndOfDayResult
-from trading_app.services.strategy_constants import normalize_symbol_code
-from trading_app.services.strategy_registry_service import get_strategy_registry_service
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
-from trading_app.services.strategy_trade_view_service import get_strategy_trade_view_service
-from trading_app.services.qmt_startup_orchestrator import QmtStartupOrchestrator
-from trading_app.services.market_data_status_service import get_market_data_status_service
-from trading_app.services.trade_record_service import get_trade_record_service
+from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+from trading_app.services.ops.live_strategy_end_of_day_service import StrategyEndOfDayResult
+from trading_app.services.strategy.strategy_constants import normalize_symbol_code
+from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_trade_view_service import get_strategy_trade_view_service
+from trading_app.services.ops.qmt_startup_orchestrator import QmtStartupOrchestrator
+from trading_app.services.market_data.market_data_status_service import get_market_data_status_service
+from trading_app.services.execution.trade_record_service import get_trade_record_service
 from trading_app.widgets.strategy_risk_settings_panel import StrategyRiskSettingsPanel
 
 from .config import RotationConfig, ConfigManager

@@ -7,9 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
-from trading_app.services.strategy_risk import StrategyRiskRegistry
-from trading_app.services.trade_execution_service import TradeExecutionService
-from trading_app.services.risk_guard_service import RiskGuardService
+from trading_app.services.strategy.strategy_risk import StrategyRiskRegistry
+from trading_app.services.execution.trade_execution_service import TradeExecutionService
+from trading_app.services.execution.risk_guard_service import RiskGuardService
 
 
 class BrokerStub:

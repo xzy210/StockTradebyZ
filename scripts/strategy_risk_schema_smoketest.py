@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 
 from live_rotation.config import RotationConfig
 from live_rotation.rotation_risk_policy import ETFRotationRiskPolicy
-from trading_app.services.strategy_risk import (
+from trading_app.services.strategy.strategy_risk import (
     RiskConfigField,
     is_configurable,
 )

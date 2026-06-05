@@ -15,7 +15,7 @@ from PyQt6.QtCore import QObject, QTimer, pyqtSignal, QThread
 try:
     from trading_app.data_updater import DataUpdateThread, ETFUpdateThread, IndexUpdateThread
     from trading_app.notifier import get_notification_manager
-    from trading_app.services.data_update_result import DataUpdateResult
+    from trading_app.services.market_data.data_update_result import DataUpdateResult
 except ImportError:
     from .data_updater import DataUpdateThread, ETFUpdateThread, IndexUpdateThread
     from .notifier import get_notification_manager

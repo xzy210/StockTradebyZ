@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from common.agent.agent_runtime import PreparedAgentRequest, StockAgentRuntime as _CommonStockAgentRuntime
 
-from trading_app.services.stock_agent_tools import (
+from trading_app.services.ai.stock_agent_tools import (
     AgentToolExecutionContext,
     build_default_stock_tool_registry,
     extract_symbol_codes,

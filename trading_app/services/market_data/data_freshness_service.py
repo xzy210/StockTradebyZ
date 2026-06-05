@@ -26,7 +26,7 @@ from common.xtquant_data_health import (
     evaluate_xtquant_data_freshness,
     test_xtquant_data_freshness,
 )
-from trading_app.services.data_update_result import DataUpdateResult
+from trading_app.services.market_data.data_update_result import DataUpdateResult
 
 logger = logging.getLogger(__name__)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 from .strategy_plugin import LiveStrategyPlugin, LiveStrategyPortfolioProvider, LiveStrategyTaskSpec
 

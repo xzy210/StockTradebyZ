@@ -8,10 +8,10 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QMainWindow
 
 from common.broker_session_service import get_broker_session_service
-from trading_app.services.auto_stop_loss_service import get_auto_stop_loss_service
-from trading_app.services.conditional_order_service import get_conditional_order_service
-from trading_app.services.trade_execution_service import get_trade_execution_service
-from trading_app.services.trade_record_service import (
+from trading_app.services.execution.auto_stop_loss_service import get_auto_stop_loss_service
+from trading_app.services.execution.conditional_order_service import get_conditional_order_service
+from trading_app.services.execution.trade_execution_service import get_trade_execution_service
+from trading_app.services.execution.trade_record_service import (
     TradeDirection,
     TradeSource,
     get_trade_record_service,

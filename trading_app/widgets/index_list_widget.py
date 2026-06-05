@@ -15,7 +15,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QThread
 try:
     from ..services.index_service import fetch_index_data, update_all_indices
 except ImportError:
-    from trading_app.services.index_service import fetch_index_data, update_all_indices
+    from trading_app.services.market_data.index_service import fetch_index_data, update_all_indices
 
 from common.data_portal import get_data_portal
 

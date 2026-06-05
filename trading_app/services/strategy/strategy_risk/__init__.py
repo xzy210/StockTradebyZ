@@ -10,7 +10,7 @@ execution gateway.
 
 Usage sketch::
 
-    from trading_app.services.strategy_risk import (
+    from trading_app.services.strategy.strategy_risk import (
         get_strategy_risk_registry,
         StrategyRiskPolicy,
         RiskPolicyDecision,

@@ -23,11 +23,11 @@ if ROOT_DIR not in sys.path:
 # 不再把 trading_app/ 目录加入 sys.path——所有 trading_app 下的模块
 # 通过 `trading_app.xxx` 形式导入，避免同一模块出现两种身份。
 
-from trading_app.services.live_strategy_logging import configure_live_strategy_logging
+from trading_app.services.ops.live_strategy_logging import configure_live_strategy_logging
 
 LOG_PATH = configure_live_strategy_logging(ROOT_DIR)
 
-from trading_app.services.ai_trade_runtime_support import AITradeRuntimeSupport
+from trading_app.services.ai.ai_trade_runtime_support import AITradeRuntimeSupport
 from trading_app.styles import DARK_THEME
 from trading_app.widgets.live_strategy_hub_widget import LiveStrategyHubWidget, LiveStrategyHubWindow
 

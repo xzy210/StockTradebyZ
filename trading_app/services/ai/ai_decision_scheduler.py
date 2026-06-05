@@ -11,7 +11,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-from trading_app.services.daily_auto_trade_service import DailyAutoTradeService, get_daily_auto_trade_service
+from trading_app.services.ai.daily_auto_trade_service import DailyAutoTradeService, get_daily_auto_trade_service
 from trading_app.services.ai.ai_stock_strategy_params_service import get_ai_stock_strategy_params_service
 from trading_app.services.live_strategy_center.task_orchestrator_service import TaskOrchestratorService
 from live_rotation.holiday_calendar import is_trading_day

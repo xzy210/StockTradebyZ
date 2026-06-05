@@ -10,7 +10,7 @@ from common.kline_update_engine import (
     run_batched_updates,
     run_xtquant_daily_history_precheck,
 )
-from trading_app.services.data_update_result import DataUpdateResult
+from trading_app.services.market_data.data_update_result import DataUpdateResult
 # Import from scripts directory
 import sys
 from pathlib import Path

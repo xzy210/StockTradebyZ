@@ -6,7 +6,7 @@ from typing import Callable, Iterable, Optional, Sequence
 from PyQt6.QtCore import QObject
 
 from common.execution_contract import OrderExecutionReport, OrderIntent, RebalanceIntent
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 logger = logging.getLogger(__name__)
 
@@ -524,7 +524,7 @@ class LiveStrategyHubController(QObject):
     def _resolve_execution_service(execution_service):
         if execution_service is not None:
             return execution_service
-        from trading_app.services.trade_execution_service import get_trade_execution_service
+        from trading_app.services.execution.trade_execution_service import get_trade_execution_service
         return get_trade_execution_service()
 
     @staticmethod

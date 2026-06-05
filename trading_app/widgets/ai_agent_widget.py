@@ -31,9 +31,9 @@ import pandas as pd
 
 # Import stock analyzer service
 try:
-    from trading_app.services.stock_analyzer import get_analyzer, StockAnalyzer
-    from trading_app.services.agent_watchlist_scan_service import AgentWatchlistScanService
-    from trading_app.services.agent_context_service import (
+    from trading_app.services.ai.stock_analyzer import get_analyzer, StockAnalyzer
+    from trading_app.services.ai.agent_watchlist_scan_service import AgentWatchlistScanService
+    from common.agent.agent_context_service import (
         AgentContextService,
         AgentRuntimeContext,
         TASK_MODE_GENERAL,
@@ -43,23 +43,23 @@ try:
         TASK_MODE_TRADE_DECISION,
         TASK_MODE_WATCHLIST_SCAN,
     )
-    from trading_app.services.agent_prompt_builder import AgentPromptBuilder
-    from trading_app.services.agent_runtime import StockAgentRuntime
-    from trading_app.services.agent_evidence_service import TEMP_PASTED_PREFIX
-    from trading_app.services.agent_action_service import AgentActionService
-    from trading_app.services.trade_decision_extractor import TradeDecisionExtractor
-    from trading_app.services.trade_decision_models import (
+    from trading_app.services.ai.agent_prompt_builder import AgentPromptBuilder
+    from trading_app.services.ai.agent_runtime import StockAgentRuntime
+    from common.agent.agent_evidence_service import TEMP_PASTED_PREFIX
+    from trading_app.services.ai.agent_action_service import AgentActionService
+    from trading_app.services.ai.trade_decision_extractor import TradeDecisionExtractor
+    from trading_app.services.ai.trade_decision_models import (
         DecisionOutcome,
         TradeDecision,
         TRADE_ACTION_LABELS,
     )
-    from trading_app.services.risk_guard_service import RiskGuardService
-    from trading_app.services.decision_tracker_service import DecisionTrackerService
+    from trading_app.services.execution.risk_guard_service import RiskGuardService
+    from trading_app.services.ai.decision_tracker_service import DecisionTrackerService
     from common.broker_session_service import get_broker_session_service
 except ImportError:
-    from trading_app.services.stock_analyzer import get_analyzer, StockAnalyzer
-    from trading_app.services.agent_watchlist_scan_service import AgentWatchlistScanService
-    from trading_app.services.agent_context_service import (
+    from trading_app.services.ai.stock_analyzer import get_analyzer, StockAnalyzer
+    from trading_app.services.ai.agent_watchlist_scan_service import AgentWatchlistScanService
+    from common.agent.agent_context_service import (
         AgentContextService,
         AgentRuntimeContext,
         TASK_MODE_GENERAL,
@@ -69,18 +69,18 @@ except ImportError:
         TASK_MODE_TRADE_DECISION,
         TASK_MODE_WATCHLIST_SCAN,
     )
-    from trading_app.services.agent_prompt_builder import AgentPromptBuilder
-    from trading_app.services.agent_runtime import StockAgentRuntime
-    from trading_app.services.agent_evidence_service import TEMP_PASTED_PREFIX
-    from trading_app.services.agent_action_service import AgentActionService
-    from trading_app.services.trade_decision_extractor import TradeDecisionExtractor
-    from trading_app.services.trade_decision_models import (
+    from trading_app.services.ai.agent_prompt_builder import AgentPromptBuilder
+    from trading_app.services.ai.agent_runtime import StockAgentRuntime
+    from common.agent.agent_evidence_service import TEMP_PASTED_PREFIX
+    from trading_app.services.ai.agent_action_service import AgentActionService
+    from trading_app.services.ai.trade_decision_extractor import TradeDecisionExtractor
+    from trading_app.services.ai.trade_decision_models import (
         DecisionOutcome,
         TradeDecision,
         TRADE_ACTION_LABELS,
     )
-    from trading_app.services.risk_guard_service import RiskGuardService
-    from trading_app.services.decision_tracker_service import DecisionTrackerService
+    from trading_app.services.execution.risk_guard_service import RiskGuardService
+    from trading_app.services.ai.decision_tracker_service import DecisionTrackerService
     from common.broker_session_service import get_broker_session_service
 
 # 设置日志

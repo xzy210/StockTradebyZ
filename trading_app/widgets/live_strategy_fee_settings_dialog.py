@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from common.io_utils import atomic_write_json
-from trading_app.services.trade_record_service import TradeRecordService
+from trading_app.services.execution.trade_record_service import TradeRecordService
 
 
 class LiveStrategyFeeSettingsDialog(QDialog):

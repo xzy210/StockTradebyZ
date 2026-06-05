@@ -15,11 +15,11 @@ from PyQt6.QtWidgets import QApplication, QVBoxLayout, QWidget
 from common.broker_session_service import get_broker_session_service
 from common.data_portal import get_data_portal
 from trading_app.indicators import attach_all_indicators
-from trading_app.services.agent_evidence_service import TEMP_KLINE_PREFIX
-from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
-from trading_app.services.realtime_snapshot_service import load_symbol_view
+from common.agent.agent_evidence_service import TEMP_KLINE_PREFIX
+from common.agent.decision_run_context import DecisionRunContext, build_decision_run_context
+from trading_app.services.market_data.realtime_snapshot_service import load_symbol_view
 from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
-from trading_app.services.strategy_constants import (
+from trading_app.services.strategy.strategy_constants import (
     AI_STOCK_STRATEGY_ID,
     AI_STOCK_STRATEGY_NAME,
     AI_STOCK_VIRTUAL_ACCOUNT_ID,

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from trading_app.services.order_state_machine import (
+from trading_app.services.execution.order_state_machine import (
     OrderLifecycle,
     OrderLifecycleEvent,
     OrderStateSnapshot,

@@ -35,17 +35,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtWidgets import QApplication, QCheckBox  # noqa: E402
 
-from trading_app.services.agent_context_service import BrokerContext  # noqa: E402
-from trading_app.services.ai_stock_risk_policy import AIStockRiskPolicy  # noqa: E402
-from trading_app.services.risk_guard_service import (  # noqa: E402
+from common.agent.agent_context_service import BrokerContext  # noqa: E402
+from trading_app.services.ai.ai_stock_risk_policy import AIStockRiskPolicy  # noqa: E402
+from trading_app.services.execution.risk_guard_service import (  # noqa: E402
     DEFAULT_CONFIG as RG_DEFAULTS,
     RiskGuardService,
 )
-from trading_app.services.strategy_risk import (  # noqa: E402
+from trading_app.services.strategy.strategy_risk import (  # noqa: E402
     RiskConfigField,
     is_configurable,
 )
-from trading_app.services.trade_decision_models import (  # noqa: E402
+from trading_app.services.ai.trade_decision_models import (  # noqa: E402
     TradeAction,
     TradeDecision,
 )

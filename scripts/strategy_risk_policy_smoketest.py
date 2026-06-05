@@ -20,17 +20,17 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from trading_app.services.auto_trade_config_service import AutoTradeConfig
-from trading_app.services.strategy_risk import (
+from trading_app.services.ai.auto_trade_config_service import AutoTradeConfig
+from trading_app.services.strategy.strategy_risk import (
     RiskPolicyDecision,
     get_strategy_risk_registry,
     reset_strategy_risk_registry,
 )
-from trading_app.services.trade_execution_service import (
+from trading_app.services.execution.trade_execution_service import (
     ExecutionRequest,
     TradeExecutionService,
 )
-from trading_app.services.trade_record_service import TradeSource
+from trading_app.services.execution.trade_record_service import TradeSource
 
 
 TEST_STRATEGY_ID = "smoketest_etf_rotation"

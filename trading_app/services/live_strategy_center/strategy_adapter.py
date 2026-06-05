@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Optional, Protocol, runtime_checkable
 
 from common.execution_contract import OrderExecutionReport, OrderIntent, RebalanceIntent, StrategySignal, TargetPortfolio
-from trading_app.services.live_strategy_end_of_day_service import StrategyEndOfDayResult
+from trading_app.services.ops.live_strategy_end_of_day_service import StrategyEndOfDayResult
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +338,7 @@ class PanelLiveStrategyAdapter:
             )
         service = execution_service
         if service is None:
-            from trading_app.services.trade_execution_service import get_trade_execution_service
+            from trading_app.services.execution.trade_execution_service import get_trade_execution_service
             service = get_trade_execution_service()
         return list(service.execute_order_intents(normalized, stock_name_map=stock_name_map or {}))
 
@@ -365,7 +365,7 @@ class PanelLiveStrategyAdapter:
             )
         service = execution_service
         if service is None:
-            from trading_app.services.trade_execution_service import get_trade_execution_service
+            from trading_app.services.execution.trade_execution_service import get_trade_execution_service
             service = get_trade_execution_service()
         return list(service.execute_rebalance_intent(normalized, stock_name_map=stock_name_map or {}))
 
@@ -392,7 +392,7 @@ class PanelLiveStrategyAdapter:
             )
         service = execution_service
         if service is None:
-            from trading_app.services.trade_execution_service import get_trade_execution_service
+            from trading_app.services.execution.trade_execution_service import get_trade_execution_service
             service = get_trade_execution_service()
         return list(service.execute_signals(normalized, stock_name_map=stock_name_map or {}))
 

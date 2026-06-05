@@ -11,15 +11,15 @@ from PyQt6.QtCore import QCoreApplication, QObject, QTimer, pyqtSignal
 
 from common.broker_session_service import BrokerSessionService, get_broker_session_service
 
-from trading_app.services.agent_context_service import BrokerContext
-from trading_app.services.auto_trade_config_service import AutoTradeConfig, get_auto_trade_config_service
-from trading_app.services.trade_decision_models import DecisionOutcome, TradeAction
-from trading_app.services.trade_execution_service import ExecutionRequest, ExecutionResult, TradeExecutionService, get_trade_execution_service
-from trading_app.services.trade_record_service import TradeRecordService, get_trade_record_service
-from trading_app.services.decision_tracker_service import DecisionTrackerService
-from trading_app.services.strategy_budget_service import get_strategy_budget_service
-from trading_app.services.strategy_constants import AI_STOCK_STRATEGY_ID, AI_STOCK_STRATEGY_NAME, AI_STOCK_VIRTUAL_ACCOUNT_ID
-from trading_app.services.strategy_registry_service import get_strategy_registry_service
+from common.agent.agent_context_service import BrokerContext
+from trading_app.services.ai.auto_trade_config_service import AutoTradeConfig, get_auto_trade_config_service
+from trading_app.services.ai.trade_decision_models import DecisionOutcome, TradeAction
+from trading_app.services.execution.trade_execution_service import ExecutionRequest, ExecutionResult, TradeExecutionService, get_trade_execution_service
+from trading_app.services.execution.trade_record_service import TradeRecordService, get_trade_record_service
+from trading_app.services.ai.decision_tracker_service import DecisionTrackerService
+from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+from trading_app.services.strategy.strategy_constants import AI_STOCK_STRATEGY_ID, AI_STOCK_STRATEGY_NAME, AI_STOCK_VIRTUAL_ACCOUNT_ID
+from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
 
 from live_rotation.holiday_calendar import is_trading_day
 

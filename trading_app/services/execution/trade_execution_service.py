@@ -13,29 +13,29 @@ from common.broker_session_service import BrokerSessionService, get_broker_sessi
 from common.execution_contract import FillReport, OrderExecutionReport, OrderIntent, RebalanceIntent, StrategySignal
 from live_rotation.holiday_calendar import get_non_trading_reason, is_trading_day
 
-from trading_app.services.agent_context_service import BrokerContext
-from trading_app.services.ai_stock_risk_policy import AIStockRiskPolicy
-from trading_app.services.auto_trade_config_service import get_auto_trade_config_service
-from trading_app.services.risk_guard_service import RiskGuardService
-from trading_app.services.strategy_budget_service import get_strategy_budget_service
-from trading_app.services.strategy_risk import (
+from common.agent.agent_context_service import BrokerContext
+from trading_app.services.ai.ai_stock_risk_policy import AIStockRiskPolicy
+from trading_app.services.ai.auto_trade_config_service import get_auto_trade_config_service
+from trading_app.services.execution.risk_guard_service import RiskGuardService
+from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+from trading_app.services.strategy.strategy_risk import (
     StrategyRiskContext,
     get_strategy_risk_registry,
 )
-from trading_app.services.strategy_constants import (
+from trading_app.services.strategy.strategy_constants import (
     AI_STOCK_STRATEGY_ID,
     AI_STOCK_STRATEGY_NAME,
     AI_STOCK_VIRTUAL_ACCOUNT_ID,
     OWNER_TYPE_AI,
     OWNER_TYPE_OTHER,
 )
-from trading_app.services.strategy_registry_service import get_strategy_registry_service
-from trading_app.services.trade_decision_models import RiskCheckResult, TradeAction, TradeDecision
-from trading_app.services.trade_record_service import TradeDirection, TradeSource, get_trade_record_service
-from trading_app.services.market_data_policy import is_etf_like_code
-from trading_app.services.market_data_status_service import get_market_data_status_service
-from trading_app.services.order_execution_event_service import OrderExecutionEvent, get_order_execution_event_service
-from trading_app.services.order_state_machine import OrderLifecycle, OrderStateSnapshot, normalize_order_state
+from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
+from trading_app.services.ai.trade_decision_models import RiskCheckResult, TradeAction, TradeDecision
+from trading_app.services.execution.trade_record_service import TradeDirection, TradeSource, get_trade_record_service
+from trading_app.services.market_data.market_data_policy import is_etf_like_code
+from trading_app.services.market_data.market_data_status_service import get_market_data_status_service
+from trading_app.services.execution.order_execution_event_service import OrderExecutionEvent, get_order_execution_event_service
+from trading_app.services.execution.order_state_machine import OrderLifecycle, OrderStateSnapshot, normalize_order_state
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +86,10 @@ class TradeExecutionService:
     def __init__(self, broker_service: Optional[BrokerSessionService] = None, broker: Optional[BrokerProtocol] = None):
         if broker is None:
             self.broker_service = broker_service or get_broker_session_service()
-            self.broker: BrokerProtocol = LiveBrokerAdapter(self.broker_service)
+            if broker_service is None:
+                self.broker = self._resolve_default_live_broker(self.broker_service)
+            else:
+                self.broker = LiveBrokerAdapter(self.broker_service)
         else:
             self.broker_service = broker_service
             self.broker = broker
@@ -102,6 +105,18 @@ class TradeExecutionService:
         self._recent_fingerprints: dict[str, float] = {}
         self._event_storage: Any = get_order_execution_event_service()
         self.pending_order_lifecycles: dict[str, OrderLifecycle] = self._rebuild_pending_order_lifecycles()
+
+    def _resolve_default_live_broker(self, broker_service: BrokerSessionService) -> BrokerProtocol:
+        try:
+            from common.trading_runtime import get_live_trading_engine
+
+            engine = get_live_trading_engine(broker_service=broker_service)
+            gateway = engine.get_gateway()
+            if gateway is not None:
+                return gateway
+        except Exception:
+            logger.debug("初始化 LiveTradingEngine 默认网关失败，回退 LiveBrokerAdapter", exc_info=True)
+        return LiveBrokerAdapter(broker_service)
 
     def _rebuild_pending_order_lifecycles(self) -> dict[str, OrderLifecycle]:
         try:
@@ -891,8 +906,29 @@ class TradeExecutionService:
                 payload=event_payload,
             )
             self._event_storage.add_event(event)
+            self._publish_order_execution_event(event)
         except Exception:
             logger.debug("记录订单执行事件失败 request_id=%s event_type=%s", request_id, event_type, exc_info=True)
+
+    def _publish_order_execution_event(self, event: OrderExecutionEvent) -> None:
+        try:
+            from common.trading_runtime import EVENT_ORDER_EXECUTION, LiveEvent, get_live_trading_engine
+
+            engine = get_live_trading_engine(start_default_gateway=False)
+            engine.event_engine.put(
+                LiveEvent(
+                    EVENT_ORDER_EXECUTION,
+                    event,
+                    gateway_name="trade_execution",
+                    symbol=event.symbol,
+                    key=event.event_id,
+                    message=event.message,
+                    level=event.level,
+                    metadata={"category": event.category, "request_id": event.request_id},
+                )
+            )
+        except Exception:
+            logger.debug("发布订单执行 live event 失败 event_id=%s", getattr(event, "event_id", ""), exc_info=True)
 
     def _poll_order_status(
         self,

@@ -15,12 +15,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from common.broker_interface import BrokerCancelResult, BrokerOrderRequest, BrokerProtocol, BrokerSubmitResult, LiveBrokerAdapter
 from common.broker_session_service import BrokerSessionService
 from strategy_app.backtest.broker import SimulationBroker
-from trading_app.services.auto_trade_config_service import AutoTradeConfig
+from trading_app.services.ai.auto_trade_config_service import AutoTradeConfig
 from trading_app.services.live_strategy_center.alert_event_service import AlertEventService
 from trading_app.services.live_strategy_center.models import LiveCenterEvent
 from trading_app.services.live_strategy_center.storage import LiveStrategyCenterStorage
-from trading_app.services.order_execution_event_service import OrderExecutionEvent, OrderExecutionEventService
-from trading_app.services.order_state_machine import (
+from trading_app.services.execution.order_execution_event_service import OrderExecutionEvent, OrderExecutionEventService
+from trading_app.services.execution.order_state_machine import (
     OrderLifecycle,
     OrderLifecycleEvent,
     OrderLifecycleState,
@@ -28,7 +28,7 @@ from trading_app.services.order_state_machine import (
     normalize_order_state,
     rebuild_order_lifecycle,
 )
-from trading_app.services.trade_execution_service import ExecutionRequest, TradeExecutionService
+from trading_app.services.execution.trade_execution_service import ExecutionRequest, TradeExecutionService
 
 class _MemoryEventStorage:
     def __init__(self) -> None:

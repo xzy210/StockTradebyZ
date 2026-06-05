@@ -33,9 +33,9 @@ from trading_app.widgets.order_book_widget import OrderBookWidget
 from trading_app.widgets.conditional_order_dialog import ConditionalOrderWidget, AddConditionalOrderDialog
 from trading_app.widgets.trade_history_widget import TradeHistoryWidget
 from trading_app.widgets.daily_pnl_widget import DailyPnlWidget
-from trading_app.services.conditional_order_service import get_conditional_order_service, OrderConditionType
-from trading_app.services.trade_execution_service import ExecutionRequest, get_trade_execution_service
-from trading_app.services.trade_record_service import TradeSource, get_trade_record_service
+from trading_app.services.execution.conditional_order_service import get_conditional_order_service, OrderConditionType
+from trading_app.services.execution.trade_execution_service import ExecutionRequest, get_trade_execution_service
+from trading_app.services.execution.trade_record_service import TradeSource, get_trade_record_service
 
 # Setup logging directory
 LOG_DIR = Path(__file__).parent.parent / "logs"
@@ -2033,7 +2033,7 @@ class BrokerAccountWidget(QWidget):
     
     def batch_create_stop_loss_for_positions(self):
         """为全部持仓批量创建止损单"""
-        from trading_app.services.auto_stop_loss_service import get_auto_stop_loss_service
+        from trading_app.services.execution.auto_stop_loss_service import get_auto_stop_loss_service
         
         auto_stop_loss_service = get_auto_stop_loss_service()
         

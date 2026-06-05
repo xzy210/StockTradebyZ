@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from trading_app.services.trade_decision_models import RiskCheckItem
+from trading_app.services.ai.trade_decision_models import RiskCheckItem
 
 RISK_LEVEL_INFO = "info"
 RISK_LEVEL_WARN = "warn"
@@ -82,7 +82,7 @@ class StrategyRiskContext:
     """
 
     now: datetime = field(default_factory=datetime.now)
-    broker: Optional[Any] = None  # trading_app.services.agent_context_service.BrokerContext
+    broker: Optional[Any] = None  # common.agent.agent_context_service.BrokerContext
     budget_snapshot: Dict[str, Any] = field(default_factory=dict)
     request_extras: Dict[str, Any] = field(default_factory=dict)
     extras: Dict[str, Any] = field(default_factory=dict)

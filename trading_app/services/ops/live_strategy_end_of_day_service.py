@@ -7,8 +7,8 @@ from typing import Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from trading_app.services.daily_auto_trade_service import DailyAutoTradeService, get_daily_auto_trade_service
-from trading_app.services.kline_full_refresh_service import KlineFullRefreshService
+from trading_app.services.ai.daily_auto_trade_service import DailyAutoTradeService, get_daily_auto_trade_service
+from trading_app.services.market_data.kline_full_refresh_service import KlineFullRefreshService
 
 logger = logging.getLogger(__name__)
 

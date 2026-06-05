@@ -55,17 +55,17 @@ from common.strategy_config_dialog_base import BaseStrategyConfigDialog
 from common.strategy_panel_context import StrategyPanelContext
 
 try:
-    from trading_app.services.agent_context_service import (
+    from common.agent.agent_context_service import (
         AgentContextService,
         AgentRuntimeContext,
         BrokerContext,
         SymbolContext,
         TASK_MODE_TRADE_DECISION,
     )
-    from trading_app.services.agent_prompt_builder import AgentPromptBuilder
-    from trading_app.services.agent_runtime import StockAgentRuntime
-    from trading_app.services.trade_decision_extractor import TradeDecisionExtractor
-    from trading_app.services.trade_decision_models import (
+    from trading_app.services.ai.agent_prompt_builder import AgentPromptBuilder
+    from trading_app.services.ai.agent_runtime import StockAgentRuntime
+    from trading_app.services.ai.trade_decision_extractor import TradeDecisionExtractor
+    from trading_app.services.ai.trade_decision_models import (
         DecisionOutcome,
         RiskCheckItem,
         RiskCheckResult,
@@ -73,14 +73,14 @@ try:
         TradeAction,
         TradeDecision,
     )
-    from trading_app.services.risk_guard_service import RiskGuardService
-    from trading_app.services.strategy_risk import get_strategy_risk_registry, is_configurable
-    from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
-    from trading_app.services.daily_auto_trade_service import get_daily_auto_trade_service
-    from trading_app.services.auto_trade_config_service import get_auto_trade_config_service
-    from trading_app.services.stock_pool_service import get_stock_pool_service
-    from trading_app.services.strategy_budget_service import get_strategy_budget_service
-    from trading_app.services.strategy_constants import (
+    from trading_app.services.execution.risk_guard_service import RiskGuardService
+    from trading_app.services.strategy.strategy_risk import get_strategy_risk_registry, is_configurable
+    from common.agent.decision_run_context import DecisionRunContext, build_decision_run_context
+    from trading_app.services.ai.daily_auto_trade_service import get_daily_auto_trade_service
+    from trading_app.services.ai.auto_trade_config_service import get_auto_trade_config_service
+    from trading_app.services.ai.stock_pool_service import get_stock_pool_service
+    from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+    from trading_app.services.strategy.strategy_constants import (
         AI_STOCK_STRATEGY_ID,
         AI_STOCK_STRATEGY_NAME,
         AI_STOCK_VIRTUAL_ACCOUNT_ID,
@@ -88,12 +88,12 @@ try:
         UNMANAGED_STRATEGY_NAME,
         UNMANAGED_VIRTUAL_ACCOUNT_ID,
     )
-    from trading_app.services.strategy_registry_service import get_strategy_registry_service
-    from trading_app.services.trade_execution_service import ExecutionRequest, get_trade_execution_service
-    from trading_app.services.trade_record_service import TradeSource
-    from trading_app.services.live_strategy_end_of_day_service import StrategyEndOfDayResult
-    from trading_app.services.data_update_result import DataUpdateResult
-    from trading_app.services.market_data_status_service import get_market_data_status_service
+    from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
+    from trading_app.services.execution.trade_execution_service import ExecutionRequest, get_trade_execution_service
+    from trading_app.services.execution.trade_record_service import TradeSource
+    from trading_app.services.ops.live_strategy_end_of_day_service import StrategyEndOfDayResult
+    from trading_app.services.market_data.data_update_result import DataUpdateResult
+    from trading_app.services.market_data.market_data_status_service import get_market_data_status_service
     from trading_app.services.ai.evidence_trace_store import (
         EvidenceStep,
         EvidenceTrace,
@@ -108,17 +108,17 @@ try:
     from common.broker_session_service import get_broker_session_service
     from trading_app.watchlist_manager import WatchlistManager
 except ImportError:
-    from trading_app.services.agent_context_service import (
+    from common.agent.agent_context_service import (
         AgentContextService,
         AgentRuntimeContext,
         BrokerContext,
         SymbolContext,
         TASK_MODE_TRADE_DECISION,
     )
-    from trading_app.services.agent_prompt_builder import AgentPromptBuilder
-    from trading_app.services.agent_runtime import StockAgentRuntime
-    from trading_app.services.trade_decision_extractor import TradeDecisionExtractor
-    from trading_app.services.trade_decision_models import (
+    from trading_app.services.ai.agent_prompt_builder import AgentPromptBuilder
+    from trading_app.services.ai.agent_runtime import StockAgentRuntime
+    from trading_app.services.ai.trade_decision_extractor import TradeDecisionExtractor
+    from trading_app.services.ai.trade_decision_models import (
         DecisionOutcome,
         RiskCheckItem,
         RiskCheckResult,
@@ -126,14 +126,14 @@ except ImportError:
         TradeAction,
         TradeDecision,
     )
-    from trading_app.services.risk_guard_service import RiskGuardService
-    from trading_app.services.strategy_risk import get_strategy_risk_registry, is_configurable
-    from trading_app.services.decision_run_context import DecisionRunContext, build_decision_run_context
-    from trading_app.services.daily_auto_trade_service import get_daily_auto_trade_service
-    from trading_app.services.auto_trade_config_service import get_auto_trade_config_service
-    from trading_app.services.stock_pool_service import get_stock_pool_service
-    from trading_app.services.strategy_budget_service import get_strategy_budget_service
-    from trading_app.services.strategy_constants import (
+    from trading_app.services.execution.risk_guard_service import RiskGuardService
+    from trading_app.services.strategy.strategy_risk import get_strategy_risk_registry, is_configurable
+    from common.agent.decision_run_context import DecisionRunContext, build_decision_run_context
+    from trading_app.services.ai.daily_auto_trade_service import get_daily_auto_trade_service
+    from trading_app.services.ai.auto_trade_config_service import get_auto_trade_config_service
+    from trading_app.services.ai.stock_pool_service import get_stock_pool_service
+    from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
+    from trading_app.services.strategy.strategy_constants import (
         AI_STOCK_STRATEGY_ID,
         AI_STOCK_STRATEGY_NAME,
         AI_STOCK_VIRTUAL_ACCOUNT_ID,
@@ -141,12 +141,12 @@ except ImportError:
         UNMANAGED_STRATEGY_NAME,
         UNMANAGED_VIRTUAL_ACCOUNT_ID,
     )
-    from trading_app.services.strategy_registry_service import get_strategy_registry_service
-    from trading_app.services.trade_execution_service import ExecutionRequest, get_trade_execution_service
-    from trading_app.services.trade_record_service import TradeSource
-    from trading_app.services.live_strategy_end_of_day_service import StrategyEndOfDayResult
-    from trading_app.services.data_update_result import DataUpdateResult
-    from trading_app.services.market_data_status_service import get_market_data_status_service
+    from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
+    from trading_app.services.execution.trade_execution_service import ExecutionRequest, get_trade_execution_service
+    from trading_app.services.execution.trade_record_service import TradeSource
+    from trading_app.services.ops.live_strategy_end_of_day_service import StrategyEndOfDayResult
+    from trading_app.services.market_data.data_update_result import DataUpdateResult
+    from trading_app.services.market_data.market_data_status_service import get_market_data_status_service
     from trading_app.services.ai.evidence_trace_store import (
         EvidenceStep,
         EvidenceTrace,
@@ -1831,9 +1831,9 @@ class DecisionPanel(QWidget):
 
     def _run_with_freshness_check(self, codes: list, proceed_callback):
         try:
-            from trading_app.services.data_freshness_service import check_parquet_freshness
+            from trading_app.services.market_data.data_freshness_service import check_parquet_freshness
         except ImportError:
-            from trading_app.services.data_freshness_service import check_parquet_freshness
+            from trading_app.services.market_data.data_freshness_service import check_parquet_freshness
 
         unique_codes = []
         seen_codes = set()
@@ -3299,10 +3299,10 @@ class DecisionPanel(QWidget):
 
     def _try_scan_notification(self):
         try:
-            from trading_app.services.ai_decision_notifier import notify_scan_complete
+            from trading_app.services.ai.ai_decision_notifier import notify_scan_complete
         except ImportError:
             try:
-                from trading_app.services.ai_decision_notifier import notify_scan_complete
+                from trading_app.services.ai.ai_decision_notifier import notify_scan_complete
             except ImportError:
                 return
         if self._current_mode == DECISION_MODE_CANDIDATE_POOL_SCAN:

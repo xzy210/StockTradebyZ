@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from trading_app.services.market_data_policy import (
+from trading_app.services.market_data.market_data_policy import (
     can_use_daily_fallback,
     evaluate_tick_freshness,
 )

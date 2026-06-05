@@ -8,10 +8,10 @@ from typing import Any, Optional
 from common.io_utils import atomic_write_json
 from strategy_app.strategies.ai_stock_strategy_params import AIStockStrategyParams
 
-from trading_app.services.auto_trade_config_service import AutoTradeConfig
+from trading_app.services.ai.auto_trade_config_service import AutoTradeConfig
 from trading_app.services.execution.risk_guard_service import DEFAULT_CONFIG as RISK_DEFAULT_CONFIG
 from trading_app.services.live_strategy_center.storage import get_live_strategy_center_storage
-from trading_app.services.stock_pool_service import StockPoolConfig
+from trading_app.services.ai.stock_pool_service import StockPoolConfig
 
 logger = logging.getLogger(__name__)
 

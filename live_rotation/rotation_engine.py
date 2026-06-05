@@ -28,7 +28,7 @@ from .rotation_signal_service import RotationDecisionService, RotationSignalServ
 from .rotation_status_service import RotationStatusService
 from .trade_executor import BrokerReadOnlyExecutor, TradeExecutor, SimulatedExecutor
 from .notifier import RotationNotifier
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ class RotationEngine(QObject):
         / state_mgr 重新加载后 policy 能自动读到最新对象。
         """
         try:
-            from trading_app.services.strategy_risk import get_strategy_risk_registry
+            from trading_app.services.strategy.strategy_risk import get_strategy_risk_registry
 
             strategy_id, _, _ = self._etf_strategy_identity()
             policy = ETFRotationRiskPolicy(
@@ -278,7 +278,7 @@ class RotationEngine(QObject):
         if self._strategy_risk_policy is None:
             return
         try:
-            from trading_app.services.strategy_risk import get_strategy_risk_registry
+            from trading_app.services.strategy.strategy_risk import get_strategy_risk_registry
 
             get_strategy_risk_registry().unregister(
                 self._strategy_risk_policy.strategy_id,
@@ -310,7 +310,7 @@ class RotationEngine(QObject):
             return True, ""
 
         try:
-            from trading_app.services.strategy_risk import (
+            from trading_app.services.strategy.strategy_risk import (
                 StrategyRiskContext,
                 get_strategy_risk_registry,
             )
@@ -618,7 +618,7 @@ class RotationEngine(QObject):
                 "SimulatedExecutor 仅允许配合显式注入的测试执行服务；"
                 "ETF 轮动实盘委托必须通过 TradeExecutionService 统一入口。"
             )
-        from trading_app.services.trade_execution_service import get_trade_execution_service
+        from trading_app.services.execution.trade_execution_service import get_trade_execution_service
         return get_trade_execution_service()
 
     def _on_execution_trade_event(self, success: bool, result: dict) -> None:

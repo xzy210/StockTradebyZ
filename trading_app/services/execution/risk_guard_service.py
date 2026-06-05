@@ -7,9 +7,9 @@ from typing import Any, Dict, Optional
 
 from common.io_utils import atomic_write_json
 
-from trading_app.services.agent_context_service import BrokerContext
-from trading_app.services.portfolio_risk_service import PortfolioRiskService
-from trading_app.services.trade_decision_models import (
+from common.agent.agent_context_service import BrokerContext
+from trading_app.services.execution.portfolio_risk_service import PortfolioRiskService
+from trading_app.services.ai.trade_decision_models import (
     RiskCheckItem,
     RiskCheckResult,
     TradeAction,

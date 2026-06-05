@@ -11,8 +11,8 @@ from trading_app.services.ai.decision_session_store import (
     DecisionSessionStore,
 )
 from trading_app.services.ai.evidence_trace_store import EvidenceTrace, EvidenceTraceStore
-from trading_app.services.decision_tracker_service import DecisionTrackerService
-from trading_app.services.trade_decision_models import (
+from trading_app.services.ai.decision_tracker_service import DecisionTrackerService
+from trading_app.services.ai.trade_decision_models import (
     DecisionRecord,
     RiskCheckResult,
     TradeDecision,

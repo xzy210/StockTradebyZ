@@ -1700,7 +1700,7 @@ class DataPortal:
         return df.reset_index(drop=True) if not df.empty else None
 
     def _list_index_assets(self) -> list[AssetMetadata]:
-        from trading_app.services.index_service import get_index_list
+        from trading_app.services.market_data.index_service import get_index_list
 
         return [
             AssetMetadata(

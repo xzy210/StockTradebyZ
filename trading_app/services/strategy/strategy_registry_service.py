@@ -13,11 +13,11 @@ from common.strategy_registry_service import (
 from common.io_utils import atomic_write_json
 from common.strategy_spec import StrategySpec
 
-from trading_app.services.strategy_constants import (
+from trading_app.services.strategy.strategy_constants import (
     OWNER_TYPE_OTHER,
     normalize_symbol_code,
 )
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 logger = logging.getLogger(__name__)
 

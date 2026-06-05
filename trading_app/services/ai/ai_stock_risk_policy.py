@@ -15,10 +15,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from trading_app.services.agent_context_service import BrokerContext
-from trading_app.services.risk_guard_service import DEFAULT_CONFIG as _RISK_GUARD_DEFAULTS, RiskGuardService
-from trading_app.services.strategy_constants import AI_STOCK_STRATEGY_ID
-from trading_app.services.strategy_risk import (
+from common.agent.agent_context_service import BrokerContext
+from trading_app.services.execution.risk_guard_service import DEFAULT_CONFIG as _RISK_GUARD_DEFAULTS, RiskGuardService
+from trading_app.services.strategy.strategy_constants import AI_STOCK_STRATEGY_ID
+from trading_app.services.strategy.strategy_risk import (
     RiskConfigField,
     RiskPolicyDecision,
     StrategyRiskContext,

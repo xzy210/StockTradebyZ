@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import (
 from common.data_portal import get_data_portal
 from common.indicators import attach_all_indicators
 from common.market_data_policy import is_etf_like_code, normalize_symbol_code
-from trading_app.services.quote_service import QuoteData, get_quote_service
+from trading_app.services.market_data.quote_service import QuoteData, get_quote_service
 from trading_app.widgets.kline_widget import KLineWidget
 from trading_app.widgets.order_book_widget import OrderBookWidget
 from trading_app.widgets.timeshare_widget import TimeShareWidget

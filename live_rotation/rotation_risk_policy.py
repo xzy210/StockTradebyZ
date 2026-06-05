@@ -3,7 +3,7 @@
 这是 ETF 轮动实盘风控的**唯一事实源**（此前的 ``live_rotation.risk_manager``
 已整体移除）。规则被封装为 :class:`ETFRotationRiskPolicy`，并由
 :class:`RotationEngine` 在启动时注册到
-:class:`trading_app.services.strategy_risk.StrategyRiskRegistry`。
+:class:`trading_app.services.strategy.strategy_risk.StrategyRiskRegistry`。
 
 两条触发路径：
   * 真实盘：订单经 :class:`TradeExecutionService` 统一网关时自动触发 policy；
@@ -22,7 +22,7 @@ import logging
 from datetime import datetime, time as dtime
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from trading_app.services.strategy_risk import (
+from trading_app.services.strategy.strategy_risk import (
     RiskConfigField,
     RiskPolicyDecision,
     StrategyRiskContext,

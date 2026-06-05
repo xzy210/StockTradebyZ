@@ -27,12 +27,12 @@ import pyqtgraph as pg
 try:
     from ..services.quote_service import get_quote_service, QuoteData, to_xt_code
 except ImportError:
-    from trading_app.services.quote_service import get_quote_service, QuoteData, to_xt_code
+    from trading_app.services.market_data.quote_service import get_quote_service, QuoteData, to_xt_code
 
 try:
     from ..services.trade_record_service import get_trade_record_service
 except ImportError:
-    from trading_app.services.trade_record_service import get_trade_record_service
+    from trading_app.services.execution.trade_record_service import get_trade_record_service
 
 # 配置 pyqtgraph
 pg.setConfigOptions(antialias=True)

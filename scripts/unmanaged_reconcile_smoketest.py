@@ -17,11 +17,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from trading_app.services.strategy_budget_service import (
+from trading_app.services.strategy.strategy_budget_service import (
     StrategyBudgetService,
     StrategyPositionState,
 )
-from trading_app.services.strategy_constants import (
+from trading_app.services.strategy.strategy_constants import (
     OWNER_TYPE_UNMANAGED,
     UNMANAGED_STRATEGY_ID,
 )

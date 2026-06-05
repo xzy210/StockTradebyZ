@@ -24,8 +24,8 @@ from .rotation_ledger_service import RotationLedgerService
 from .rotation_signal_service import RotationDecisionService, RotationSignalService
 from .state_manager import RotationState, StateManager
 from .trade_executor import TradeExecutor
-from trading_app.services.market_data_status_service import get_market_data_status_service
-from trading_app.services.strategy_spec_service import get_strategy_spec_service
+from trading_app.services.market_data.market_data_status_service import get_market_data_status_service
+from trading_app.services.strategy.strategy_spec_service import get_strategy_spec_service
 
 logger = logging.getLogger(__name__)
 

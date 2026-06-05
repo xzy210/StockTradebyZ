@@ -1189,7 +1189,7 @@ class TradeRecordService(QObject):
             except Exception as exc:
                 logger.debug("按委托号推断策略归属失败: order_id=%s error=%s", broker_order_id, exc)
         try:
-            from trading_app.services.strategy_registry_service import get_strategy_registry_service
+            from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
 
             owner = get_strategy_registry_service().get_owner(stock_code)
         except Exception:
@@ -1438,13 +1438,13 @@ class TradeRecordService(QObject):
         
         for order in orders:
             try:
-                order_status = int(getattr(order, 'order_status', 0) or 0)
-                traded_volume = int(getattr(order, 'traded_volume', 0) or 0)
+                order_status = int(getattr(order, 'order_status', 0) or getattr(order, 'status_code', 0) or 0)
+                traded_volume = int(getattr(order, 'traded_volume', 0) or getattr(order, 'traded', 0) or 0)
                 if not self._order_snapshot_has_fill(order_status, traded_volume):
                     continue
 
                 # 获取委托ID
-                order_id = getattr(order, 'order_id', 0)
+                order_id = getattr(order, 'order_id', 0) or getattr(order, 'orderid', 0)
                 if not order_id:
                     continue
 
@@ -1454,7 +1454,7 @@ class TradeRecordService(QObject):
                     today,
                 )
                 # 解析交易数据
-                stock_code = str(getattr(order, 'stock_code', '')).split('.')[0]
+                stock_code = str(getattr(order, 'stock_code', '') or getattr(order, 'symbol', '')).split('.')[0]
                 if self._is_order_synced(order_id, trade_date, stock_code):
                     continue
 
@@ -1462,7 +1462,8 @@ class TradeRecordService(QObject):
                     order_type = int(getattr(order, 'order_type', 0) or 0)
                 except (TypeError, ValueError):
                     order_type = 0
-                direction = TradeDirection.BUY.value if order_type == 23 else TradeDirection.SELL.value
+                direction_value = str(getattr(getattr(order, "direction", ""), "value", getattr(order, "direction", "")) or "").lower()
+                direction = direction_value if direction_value in (TradeDirection.BUY.value, TradeDirection.SELL.value) else (TradeDirection.BUY.value if order_type == 23 else TradeDirection.SELL.value)
                 inferred_strategy_id, inferred_virtual_account_id, inferred_intent_id = self._infer_strategy_identity(
                     stock_code,
                     strategy_id=strategy_id,
@@ -1487,7 +1488,7 @@ class TradeRecordService(QObject):
                         stock_name = stock_code
                 
                 # 成交价格和数量
-                price = float(getattr(order, 'traded_price', 0) or 0)
+                price = float(getattr(order, 'traded_price', 0) or getattr(order, 'price', 0) or 0)
                 volume = traded_volume
                 
                 if price <= 0 or volume <= 0:
@@ -2801,7 +2802,7 @@ class TradeRecordService(QObject):
         按股票归属修正 broker_sync 成交记录的策略归属，避免账户级同步串到错误策略。
         """
         try:
-            from trading_app.services.strategy_registry_service import get_strategy_registry_service
+            from trading_app.services.strategy.strategy_registry_service import get_strategy_registry_service
 
             registry = get_strategy_registry_service()
         except Exception as exc:

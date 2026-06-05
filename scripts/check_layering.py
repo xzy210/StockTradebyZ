@@ -57,13 +57,14 @@ _READONLY_MARKET_VIEW_FILES = [
     PROJECT_ROOT / "trading_app" / "widgets" / "readonly_market_view_dialog.py",
 ]
 _COMMON_AGENT_DIR = PROJECT_ROOT / "common" / "agent"
+_COMMON_TRADING_RUNTIME_DIR = PROJECT_ROOT / "common" / "trading_runtime"
 
 # Phase 1 is a guardrail step. These historical reverse dependencies are
 # tolerated only as a baseline until Phase 2 moves the registry/service code.
 _TRADING_APP_IMPORT_BASELINE = {
-    "common/data_portal.py::from trading_app.services.index_service import get_index_list",
-    "common/strategy_trade_panel.py::from trading_app.services.strategy_trade_view_service import get_strategy_trade_view_service",
-    "common/strategy_trade_panel.py::from trading_app.services.trade_record_service import get_trade_record_service",
+    "common/data_portal.py::from trading_app.services.market_data.index_service import get_index_list",
+    "common/strategy_trade_panel.py::from trading_app.services.strategy.strategy_trade_view_service import get_strategy_trade_view_service",
+    "common/strategy_trade_panel.py::from trading_app.services.execution.trade_record_service import get_trade_record_service",
 }
 
 
@@ -182,6 +183,30 @@ def _check_common_agent_boundaries() -> int:
     return 0
 
 
+def _check_common_trading_runtime_boundaries() -> int:
+    if not _COMMON_TRADING_RUNTIME_DIR.exists():
+        return 0
+    forbidden_pattern = re.compile(
+        r"^\s*(?:from|import)\s+(?:trading_app|live_rotation)(?:\.|\b)"
+        r"|\b(?:from|import)\s+PyQt6\b"
+        r"|\bQTimer\b|\bQThread\b|\bQObject\b|\bpyqtSignal\b"
+    )
+    violations: list[str] = []
+    for path in sorted(_COMMON_TRADING_RUNTIME_DIR.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if forbidden_pattern.search(line):
+                rel = path.relative_to(PROJECT_ROOT)
+                violations.append(f"{rel}:{line_no}: {line.strip()}")
+    if violations:
+        print("common_trading_runtime_boundary_check_failed")
+        print("common/trading_runtime must not depend on trading_app, live_rotation, or PyQt.")
+        for item in violations:
+            print(item)
+        return 1
+    return 0
+
+
 def main() -> int:
     entrypoint_status = _check_entrypoints()
     if entrypoint_status:
@@ -195,6 +220,9 @@ def main() -> int:
     common_agent_status = _check_common_agent_boundaries()
     if common_agent_status:
         return common_agent_status
+    common_runtime_status = _check_common_trading_runtime_boundaries()
+    if common_runtime_status:
+        return common_runtime_status
 
     violations: list[str] = []
     for path in _iter_target_files():

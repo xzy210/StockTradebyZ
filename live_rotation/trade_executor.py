@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Tuple, Optional, Callable
 
 from common.broker_session_service import BrokerSessionService, get_broker_session_service
-from trading_app.services.market_data_gateway import get_market_data_gateway, to_xt_code as gateway_to_xt_code
+from trading_app.services.market_data.market_data_gateway import get_market_data_gateway, to_xt_code as gateway_to_xt_code
 
 logger = logging.getLogger(__name__)
 

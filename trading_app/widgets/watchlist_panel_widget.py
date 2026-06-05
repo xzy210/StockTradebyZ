@@ -13,7 +13,7 @@ from PyQt6.QtGui import QColor, QFont, QPen, QBrush
 try:
     from common.data_portal import get_data_portal
     from .kline_widget import CandlestickItem
-    from trading_app.services.quote_service import get_quote_service, QuoteData, to_xt_code
+    from trading_app.services.market_data.quote_service import get_quote_service, QuoteData, to_xt_code
 except ImportError:
     from common.data_portal import get_data_portal
     from .kline_widget import CandlestickItem

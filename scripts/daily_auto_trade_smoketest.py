@@ -8,12 +8,12 @@ from types import SimpleNamespace
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from trading_app.services.agent_context_service import BrokerContext
-from trading_app.services.auto_trade_config_service import AutoTradeConfig
-from trading_app.services.daily_auto_trade_service import DailyAutoTradeService
-from trading_app.services.live_strategy_end_of_day_service import LiveStrategyEndOfDayService, StrategyEndOfDayResult
-from trading_app.services.trade_decision_models import RiskCheckResult, TradeDecision
-from trading_app.services.trade_execution_service import TradeExecutionService
+from common.agent.agent_context_service import BrokerContext
+from trading_app.services.ai.auto_trade_config_service import AutoTradeConfig
+from trading_app.services.ai.daily_auto_trade_service import DailyAutoTradeService
+from trading_app.services.ops.live_strategy_end_of_day_service import LiveStrategyEndOfDayService, StrategyEndOfDayResult
+from trading_app.services.ai.trade_decision_models import RiskCheckResult, TradeDecision
+from trading_app.services.execution.trade_execution_service import TradeExecutionService
 
 
 class FakeBroker:

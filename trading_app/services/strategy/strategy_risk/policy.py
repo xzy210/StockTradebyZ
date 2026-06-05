@@ -7,7 +7,7 @@ from .models import RiskPolicyDecision, StrategyRiskContext
 from .schema import RiskConfigField
 
 if TYPE_CHECKING:  # pragma: no cover
-    from trading_app.services.trade_execution_service import ExecutionRequest
+    from trading_app.services.execution.trade_execution_service import ExecutionRequest
 
 logger = logging.getLogger(__name__)
 

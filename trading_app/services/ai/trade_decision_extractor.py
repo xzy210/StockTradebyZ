@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Optional
 
-from trading_app.services.trade_decision_models import TradeAction, TradeDecision
+from trading_app.services.ai.trade_decision_models import TradeAction, TradeDecision
 
 logger = logging.getLogger(__name__)
 

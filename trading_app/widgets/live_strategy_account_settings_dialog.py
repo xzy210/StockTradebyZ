@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from trading_app.services.auto_trade_config_service import (
+from trading_app.services.ai.auto_trade_config_service import (
     AutoTradeConfig,
     AutoTradeConfigService,
     get_auto_trade_config_service,

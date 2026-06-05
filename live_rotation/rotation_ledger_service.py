@@ -142,7 +142,7 @@ class RotationLedgerService:
     ) -> dict:
         """Read global trade fee config and override commission when broker returns it."""
         try:
-            from trading_app.services.trade_record_service import get_trade_record_service
+            from trading_app.services.execution.trade_record_service import get_trade_record_service
 
             fees = dict(
                 get_trade_record_service().estimate_trade_fees(
@@ -190,8 +190,8 @@ class RotationLedgerService:
             return
         strategy_id, strategy_name, virtual_account_id = self.strategy_identity_fn()
         try:
-            from trading_app.services.trade_record_service import get_trade_record_service
-            from trading_app.services.strategy_budget_service import get_strategy_budget_service
+            from trading_app.services.execution.trade_record_service import get_trade_record_service
+            from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
 
             get_trade_record_service().add_record(
                 stock_code=code,
@@ -242,8 +242,8 @@ class RotationLedgerService:
             return
         strategy_id, strategy_name, virtual_account_id = self.strategy_identity_fn()
         try:
-            from trading_app.services.trade_record_service import get_trade_record_service
-            from trading_app.services.strategy_budget_service import get_strategy_budget_service
+            from trading_app.services.execution.trade_record_service import get_trade_record_service
+            from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
 
             get_trade_record_service().add_record(
                 stock_code=code,
@@ -283,7 +283,7 @@ class RotationLedgerService:
     def ledger_available_cash(self) -> float:
         """Read current available cash from the strategy budget ledger."""
         try:
-            from trading_app.services.strategy_budget_service import get_strategy_budget_service
+            from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
 
             strategy_id, strategy_name, virtual_account_id = self.strategy_identity_fn()
             budget = get_strategy_budget_service().get_available_budget(
@@ -303,7 +303,7 @@ class RotationLedgerService:
         if not self.config.use_dedicated_capital:
             return
         try:
-            from trading_app.services.strategy_budget_service import get_strategy_budget_service
+            from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
 
             strategy_id, strategy_name, virtual_account_id = self.strategy_identity_fn()
             get_strategy_budget_service().upsert_strategy_config(
@@ -319,7 +319,7 @@ class RotationLedgerService:
         """Reset this strategy's capital limit and realized budget state."""
         cap = float(new_capital if new_capital is not None else self.config.dedicated_capital)
         try:
-            from trading_app.services.strategy_budget_service import get_strategy_budget_service
+            from trading_app.services.strategy.strategy_budget_service import get_strategy_budget_service
 
             strategy_id, strategy_name, virtual_account_id = self.strategy_identity_fn()
             service = get_strategy_budget_service()
