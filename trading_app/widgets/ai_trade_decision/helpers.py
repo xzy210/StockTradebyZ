@@ -78,6 +78,9 @@ def _build_scan_status_text(decision: Optional[TradeDecision], risk_result: Opti
     if decision is None:
         return "解析失败"
     if risk_result and not getattr(risk_result, "passed", True) and decision.is_actionable:
+        reasons = [str(item or "").strip() for item in getattr(risk_result, "blocked_reasons", []) or []]
+        if reasons:
+            return f"风控拦截: {reasons[0]}"
         return "风控拦截"
     if decision.is_actionable:
         return "可执行"

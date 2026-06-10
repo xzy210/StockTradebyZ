@@ -2726,6 +2726,9 @@ class DecisionPanel(QWidget):
                     decision.symbol_name = target_symbol_name
             if decision.current_price <= 0 and context.symbol.latest_close > 0:
                 decision.current_price = context.symbol.latest_close
+            previous_close = float((scan_item or {}).get("latest_close", 0.0) or 0.0)
+            if previous_close > 0:
+                setattr(decision, "previous_close", previous_close)
             risk_result = self.risk_guard.evaluate(decision, broker_ctx)
         else:
             risk_result = None

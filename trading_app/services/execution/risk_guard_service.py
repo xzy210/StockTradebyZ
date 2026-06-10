@@ -185,14 +185,41 @@ class RiskGuardService:
         if d.current_price <= 0:
             checks.append(RiskCheckItem(name="涨跌停检查", passed=True, message="无现价数据，跳过"))
             return
-        # We don't have today's open price, so use latest_change_pct heuristic
-        # This check relies on the caller passing valid current_price context
-        # For now, just mark as pass — real-time check will happen at order time
+        previous_close = float(
+            getattr(d, "previous_close", 0.0)
+            or getattr(d, "latest_close", 0.0)
+            or 0.0
+        )
+        if previous_close <= 0:
+            checks.append(RiskCheckItem(
+                name="涨跌停检查",
+                passed=True,
+                level="info",
+                message="缺少昨收参考，涨跌停下单前由券商实时校验",
+            ))
+            return
+
+        change_pct = (float(d.current_price or 0.0) - previous_close) / previous_close
+        is_buy = d.action in (TradeAction.BUY.value, TradeAction.ADD.value)
+        is_sell = d.action in (TradeAction.SELL.value, TradeAction.REDUCE.value)
+        limit_up_pct = float(self.config.get("limit_up_pct", DEFAULT_CONFIG["limit_up_pct"]) or 0.0)
+        limit_down_pct = float(self.config.get("limit_down_pct", DEFAULT_CONFIG["limit_down_pct"]) or 0.0)
+        if is_buy and self.config.get("block_limit_up_buy", True) and change_pct >= limit_up_pct:
+            message = f"当前涨幅 {change_pct:.1%}≥涨停阈值 {limit_up_pct:.1%}，禁止买入"
+            checks.append(RiskCheckItem(name="涨跌停检查", passed=False, level="block", message=message))
+            blocked.append(message)
+            return
+        if is_sell and self.config.get("block_limit_down_sell", True) and change_pct <= limit_down_pct:
+            message = f"当前跌幅 {change_pct:.1%}≤跌停阈值 {limit_down_pct:.1%}，禁止卖出"
+            checks.append(RiskCheckItem(name="涨跌停检查", passed=False, level="block", message=message))
+            blocked.append(message)
+            return
+
         checks.append(RiskCheckItem(
             name="涨跌停检查",
             passed=True,
             level="info",
-            message="涨跌停将在下单前由券商实时校验",
+            message=f"当前涨跌幅 {change_pct:.1%}，未触发涨跌停禁令",
         ))
 
     def _check_single_position(self, d: TradeDecision, broker: BrokerContext, checks, warnings, blocked):

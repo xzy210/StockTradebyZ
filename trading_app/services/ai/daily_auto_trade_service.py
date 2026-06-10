@@ -63,6 +63,7 @@ class DailyAutoTradeService(QObject):
         self.strategy_budget = get_strategy_budget_service()
         self._state_path = _STATE_PATH
         self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_plan_skip_reasons: List[Dict[str, Any]] = []
         self._reconcile_timer = QTimer(self)
         self._reconcile_timer.setSingleShot(True)
         self._reconcile_timer.timeout.connect(self._on_reconcile_timer)
@@ -152,11 +153,20 @@ class DailyAutoTradeService(QObject):
                 self.cycle_finished.emit(task_id, True, message, summary)
                 return
 
+            self._last_plan_skip_reasons = []
             plan = self._build_daily_plan(scan_results, broker_context, cfg)
+            plan_skip_reasons = list(self._last_plan_skip_reasons)
             if not plan:
-                summary = {"planned": [], "executed": [], "skipped": True, "reason": "没有满足条件的自动执行候选"}
+                reason = self._build_no_plan_reason(plan_skip_reasons)
+                summary = {
+                    "planned": [],
+                    "executed": [],
+                    "skipped": True,
+                    "reason": reason,
+                    "plan_skip_reasons": plan_skip_reasons,
+                }
                 self._update_task_state(task_id, status="completed", completed_at=self._now(), summary=summary)
-                self.cycle_finished.emit(task_id, True, "没有满足条件的自动执行候选", summary)
+                self.cycle_finished.emit(task_id, True, reason, summary)
                 return
 
             logger.info(
@@ -226,6 +236,7 @@ class DailyAutoTradeService(QObject):
                 "executed": executed,
                 "skipped": bool(executed) and all(item.get("execution_mode") == "skipped" for item in executed),
                 "reason": "",
+                "plan_skip_reasons": plan_skip_reasons,
             }
             success = bool(executed) or not plan
             self._update_task_state(
@@ -733,6 +744,7 @@ class DailyAutoTradeService(QObject):
             name = getattr(decision, "symbol_name", "") or result.get("symbol_name", code)
             price = float(getattr(decision, "current_price", 0) or 0)
             if not code or price <= 0:
+                self._record_plan_skip(result, code, name, "缺少有效证券代码或现价，无法规划委托")
                 continue
             owner = self.strategy_registry.get_owner(code)
             if owner and owner.enabled and owner.strategy_id != AI_STOCK_STRATEGY_ID:
@@ -740,6 +752,12 @@ class DailyAutoTradeService(QObject):
                     "自动任务跳过跨策略标的: %s 当前归属于 %s",
                     code,
                     owner.strategy_name or owner.strategy_id,
+                )
+                self._record_plan_skip(
+                    result,
+                    code,
+                    name,
+                    f"标的已归属其他策略: {owner.strategy_name or owner.strategy_id}",
                 )
                 continue
 
@@ -749,6 +767,7 @@ class DailyAutoTradeService(QObject):
             if action in (TradeAction.SELL.value, TradeAction.REDUCE.value):
                 volume = self._resolve_sell_volume(cfg, decision, position_map.get(code, {}))
                 if volume <= 0:
+                    self._record_plan_skip(result, code, name, "可卖数量不足或委托数量不足一手")
                     continue
                 sell_candidates.append(
                     PlannedOrder(
@@ -768,8 +787,10 @@ class DailyAutoTradeService(QObject):
 
             is_new = code not in positions
             if is_new and not bool(cfg.allow_open_new_position):
+                self._record_plan_skip(result, code, name, "当前配置禁止新开仓")
                 continue
             if (not is_new) and not bool(cfg.allow_add_to_existing):
+                self._record_plan_skip(result, code, name, "当前配置禁止加仓已有持仓")
                 continue
             buy_candidates.append(
                 PlannedOrder(
@@ -796,6 +817,22 @@ class DailyAutoTradeService(QObject):
 
         planned: List[PlannedOrder] = list(sell_candidates[: cfg.max_sell_orders_per_day])
         if tradable_cash <= 0 or cfg.max_buy_orders_per_day <= 0:
+            if buy_candidates and tradable_cash <= 0:
+                for item in buy_candidates:
+                    self._record_plan_skip(
+                        item.decision_payload,
+                        item.symbol_code,
+                        item.symbol_name,
+                        "策略可用预算不足，无法规划买入",
+                    )
+            if buy_candidates and cfg.max_buy_orders_per_day <= 0:
+                for item in buy_candidates:
+                    self._record_plan_skip(
+                        item.decision_payload,
+                        item.symbol_code,
+                        item.symbol_name,
+                        "今日买入笔数上限为 0",
+                    )
             return self._sort_planned_orders(planned, cfg)
 
         chosen_buys: List[PlannedOrder] = []
@@ -803,8 +840,20 @@ class DailyAutoTradeService(QObject):
         for item in buy_candidates:
             is_new = item.symbol_code not in positions
             if is_new and new_position_count >= cfg.max_new_positions_per_day:
+                self._record_plan_skip(
+                    item.decision_payload,
+                    item.symbol_code,
+                    item.symbol_name,
+                    f"今日新开仓数量已达上限 {cfg.max_new_positions_per_day}",
+                )
                 continue
             if len(chosen_buys) >= cfg.max_buy_orders_per_day:
+                self._record_plan_skip(
+                    item.decision_payload,
+                    item.symbol_code,
+                    item.symbol_name,
+                    f"今日买入笔数已达上限 {cfg.max_buy_orders_per_day}",
+                )
                 break
             chosen_buys.append(item)
             if is_new:
@@ -824,6 +873,13 @@ class DailyAutoTradeService(QObject):
             )
             volume = int(target_cash / max(item.price, 0.01) / 100) * 100
             if volume <= 0:
+                one_lot_cash = item.price * 100
+                self._record_plan_skip(
+                    item.decision_payload,
+                    item.symbol_code,
+                    item.symbol_name,
+                    f"单笔买入金额 {target_cash:,.2f} 元不足买入一手，至少需要 {one_lot_cash:,.2f} 元",
+                )
                 remaining_slots -= 1
                 continue
             item.planned_volume = volume
@@ -871,6 +927,36 @@ class DailyAutoTradeService(QObject):
             pct = max(float(cfg.buy_position_pct or 0.0), 0.0) * 100
             return f"按固定仓位 {pct:.1f}% 买入 {volume} 股"
         return f"按剩余槽位均分买入 {volume} 股"
+
+    def _record_plan_skip(self, source: Any, symbol_code: str, symbol_name: str, reason: str) -> None:
+        reason = str(reason or "").strip()
+        code = self._plain_code(symbol_code)
+        if not code or not reason:
+            return
+        if any(
+            item.get("symbol_code") == code and item.get("reason") == reason
+            for item in self._last_plan_skip_reasons
+        ):
+            return
+        decision_record_id = ""
+        if isinstance(source, dict):
+            decision_record_id = str(source.get("decision_record_id", "") or "")
+        self._last_plan_skip_reasons.append({
+            "symbol_code": code,
+            "symbol_name": str(symbol_name or code),
+            "reason": reason,
+            "decision_record_id": decision_record_id,
+        })
+
+    @staticmethod
+    def _build_no_plan_reason(plan_skip_reasons: List[Dict[str, Any]]) -> str:
+        if not plan_skip_reasons:
+            return "没有满足条件的自动执行候选"
+        first = dict(plan_skip_reasons[0] or {})
+        name = str(first.get("symbol_name", "") or first.get("symbol_code", "") or "候选标的")
+        reason = str(first.get("reason", "") or "").strip()
+        suffix = f"；另有 {len(plan_skip_reasons) - 1} 条规划跳过原因" if len(plan_skip_reasons) > 1 else ""
+        return f"没有生成自动委托: {name} {reason}{suffix}".strip()
 
     def _sort_planned_orders(self, planned: List[PlannedOrder], cfg: AutoTradeConfig) -> List[PlannedOrder]:
         if cfg.execution_sequence == "buy_first":
