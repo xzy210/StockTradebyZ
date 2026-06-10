@@ -52,6 +52,13 @@ class ETFRotationParams(BaseModel):
         title="空仓阈值",
         description="当所有 ETF 评分都低于该值时，策略保持空仓或清仓。",
     )
+    min_buy_score: float = Field(
+        0.0,
+        ge=-100.0,
+        le=100.0,
+        title="最低买入分数",
+        description="空仓或初始建仓时，最高评分低于该值则不买入。",
+    )
     enable_empty_position: bool = Field(
         True,
         title="允许空仓",

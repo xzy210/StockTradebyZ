@@ -177,6 +177,7 @@ class RotationEngine(QObject):
             scores_fn=self.scores_updated.emit,
             notify_signal_fn=self.notifier.send_signal,
             execute_rebalance_fn=self.execute_live_rebalance_intent,
+            pending_order_sync_fn=self.execution_service.reconcile_pending_order_records,
             code_name_fn=self._code_name,
             event_bus=self.event_bus,
         )

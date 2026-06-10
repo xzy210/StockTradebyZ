@@ -11,10 +11,10 @@ class OrderStatus:
 
 
 def resolve_order_status(fill: dict) -> str:
-    if fill.get("timed_out"):
-        return OrderStatus.TIMEOUT
     if fill.get("filled", False):
         return OrderStatus.FILLED
     if fill.get("filled_qty", 0) > 0:
         return OrderStatus.PARTIALLY_FILLED
+    if fill.get("timed_out"):
+        return OrderStatus.TIMEOUT
     return OrderStatus.REJECTED

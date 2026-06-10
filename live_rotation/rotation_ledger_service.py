@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 class RotationLedgerService:
     """Manage ETF rotation ledger, order records, and budget sync."""
 
+    ACTIVE_ORDER_STATUSES = {"pending_submit", "pending_fill", "submitted"}
+
     def __init__(
         self,
         *,
@@ -98,6 +100,7 @@ class RotationLedgerService:
         ordered_qty: int,
         ordered_price: float,
         reason: str = "",
+        status: str = OrderStatus.PENDING_FILL,
     ) -> OrderRecord:
         """Create and save an order record."""
         name = self.code_name_map_fn(code)
@@ -111,7 +114,7 @@ class RotationLedgerService:
             name=name,
             ordered_qty=ordered_qty,
             ordered_price=ordered_price,
-            status=OrderStatus.PENDING_FILL,
+            status=status,
             reason=reason,
         )
         self.state_mgr.add_order_record(record)
@@ -131,6 +134,19 @@ class RotationLedgerService:
             status=status,
             pnl=pnl,
         )
+
+    def active_order_records(self) -> list[dict]:
+        """Return local ETF orders that are not in a terminal state yet."""
+        active = []
+        for record in list(self.state.order_records or []):
+            status = str(record.get("status", "") or "").strip().lower()
+            if status in self.ACTIVE_ORDER_STATUSES:
+                active.append(dict(record))
+        return active
+
+    def has_active_order_records(self) -> bool:
+        """Whether this strategy still has submitted/pending local ETF orders."""
+        return bool(self.active_order_records())
 
     def resolve_trade_fees(
         self,

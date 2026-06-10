@@ -13,6 +13,7 @@ from typing import Callable, Dict, Optional
 from common.execution_contract import FillReport, OrderExecutionReport
 
 from .config import RotationConfig
+from .order_state_machine import OrderStatus
 from .rotation_ledger_service import RotationLedgerService
 from .state_manager import RotationState, StateManager, TradeRecord
 from .trade_executor import TradeExecutor
@@ -119,7 +120,15 @@ class RotationExecutionService:
             trade["success"] = True
             trade["message"] = report.message or "委托已提交，等待成交确认"
             trade["submitted"] = bool(report.submitted or report.accepted)
-            self.ledger_service.add_order_record(order_id, "买入" if action == "BUY" else "卖出", code, int(intent.quantity or 0), price, trade_reason)
+            self.ledger_service.add_order_record(
+                order_id,
+                "买入" if action == "BUY" else "卖出",
+                code,
+                int(intent.quantity or 0),
+                price,
+                trade_reason,
+                status="submitted",
+            )
             self.logger_fn(f"⏳ {action}委托已提交: {self.code_name_fn(code)} {intent.quantity}股 @ {price:.3f}")
             self.trade_event_fn(True, trade)
             return trade
@@ -140,6 +149,60 @@ class RotationExecutionService:
         self.trade_event_fn(True, trade)
         return trade
 
+    def reconcile_pending_order_records(self) -> int:
+        """Refresh submitted ETF orders and apply fills missed by the initial poll."""
+        synced = 0
+        for record in self.ledger_service.active_order_records():
+            order_id = int(record.get("order_id") or 0)
+            if order_id <= 0:
+                continue
+            try:
+                fill = self.executor.query_order_fill(order_id, timeout_secs=1.0)
+            except Exception as exc:
+                self.logger_fn(f"⚠ 同步未完成委托 #{order_id} 失败: {exc}")
+                continue
+
+            filled_qty = int(fill.get("filled_qty", 0) or 0)
+            filled_price = float(fill.get("filled_price", 0.0) or 0.0)
+            if bool(fill.get("filled", False)) and filled_qty > 0 and filled_price > 0:
+                action = str(record.get("action") or "")
+                code = self._plain_code(str(record.get("code") or ""))
+                reason = str(record.get("reason") or "")
+                if "买" in action:
+                    self._sync_delayed_buy_fill(code, filled_price, filled_qty, order_id, reason, fill)
+                else:
+                    self._sync_delayed_sell_fill(code, filled_price, filled_qty, order_id, reason, fill)
+                synced += 1
+                continue
+
+            if filled_qty > 0:
+                self.ledger_service.update_order_record(order_id, fill)
+                synced += 1
+                continue
+
+            if not bool(fill.get("timed_out", False)):
+                self.ledger_service.update_order_record(order_id, fill)
+                synced += 1
+                continue
+
+            if self._is_stale_order_record(record):
+                if self._sync_stale_sell_from_position(record):
+                    synced += 1
+                    continue
+                self.ledger_service.update_order_record(
+                    order_id,
+                    {
+                        "filled": False,
+                        "filled_qty": 0,
+                        "filled_price": 0.0,
+                        "commission": -1.0,
+                        "timed_out": True,
+                    },
+                )
+                self.logger_fn(f"⚠ 委托 #{order_id} 已跨交易日仍未确认，标记为 {OrderStatus.TIMEOUT}")
+                synced += 1
+        return synced
+
     @staticmethod
     def _plain_code(symbol: str) -> str:
         return str(symbol or "").split(".")[0].upper()
@@ -148,6 +211,112 @@ class RotationExecutionService:
     def _report_fill(report: OrderExecutionReport) -> Optional[FillReport]:
         fills = list(report.fills or ())
         return fills[0] if fills else None
+
+    @staticmethod
+    def _is_stale_order_record(record: dict) -> bool:
+        order_date = str(record.get("date") or "").strip()
+        if not order_date:
+            return False
+        try:
+            return order_date < datetime.now().strftime("%Y-%m-%d")
+        except Exception:
+            return False
+
+    def _sync_delayed_buy_fill(
+        self,
+        code: str,
+        price: float,
+        quantity: int,
+        order_id: int,
+        reason: str,
+        fill: dict,
+    ) -> None:
+        fee_info = self.ledger_service.resolve_trade_fees(
+            direction="buy",
+            amount=price * quantity,
+            stock_code=code,
+            actual_commission=float(fill.get("commission", -1.0) or -1.0),
+        )
+        self.ledger_service.sync_unified_ledger_on_buy(
+            code=code,
+            name=self.code_name_map_fn(code),
+            price=price,
+            volume=quantity,
+            commission=float(fee_info.get("commission", 0.0) or 0.0),
+            stamp_tax=float(fee_info.get("stamp_tax", 0.0) or 0.0),
+            transfer_fee=float(fee_info.get("transfer_fee", 0.0) or 0.0),
+            broker_order_id=order_id,
+            reason=reason,
+        )
+        self._apply_buy_fill(code, price, quantity, order_id, reason)
+
+    def _sync_delayed_sell_fill(
+        self,
+        code: str,
+        price: float,
+        quantity: int,
+        order_id: int,
+        reason: str,
+        fill: dict,
+    ) -> None:
+        fee_info = self.ledger_service.resolve_trade_fees(
+            direction="sell",
+            amount=price * quantity,
+            stock_code=code,
+            actual_commission=float(fill.get("commission", -1.0) or -1.0),
+        )
+        self.ledger_service.sync_unified_ledger_on_sell(
+            code=code,
+            name=self.code_name_map_fn(code),
+            price=price,
+            volume=quantity,
+            commission=float(fee_info.get("commission", 0.0) or 0.0),
+            stamp_tax=float(fee_info.get("stamp_tax", 0.0) or 0.0),
+            transfer_fee=float(fee_info.get("transfer_fee", 0.0) or 0.0),
+            broker_order_id=order_id,
+            reason=reason,
+        )
+        self._apply_sell_fill(code, price, quantity, order_id, reason)
+
+    def _sync_stale_sell_from_position(self, record: dict) -> bool:
+        action = str(record.get("action") or "")
+        if "卖" not in action:
+            return False
+        code = self._plain_code(str(record.get("code") or ""))
+        if not code or code != self._plain_code(str(self.state.current_holding or "")):
+            return False
+        order_id = int(record.get("order_id") or 0)
+        ordered_qty = int(record.get("ordered_qty") or 0)
+        ordered_price = float(record.get("ordered_price") or 0.0)
+        if order_id <= 0 or ordered_qty <= 0 or ordered_price <= 0:
+            return False
+        before_qty = int(self.state.buy_quantity or 0)
+        if before_qty <= 0:
+            return False
+        try:
+            broker_qty, _ = self.executor.query_position(code)
+        except Exception:
+            return False
+        broker_qty = max(int(broker_qty or 0), 0)
+        if broker_qty >= before_qty:
+            return False
+        inferred_qty = min(ordered_qty, before_qty - broker_qty)
+        if inferred_qty <= 0:
+            return False
+        reason = str(record.get("reason") or "")
+        self.logger_fn(
+            f"🔄 跨日委托 #{order_id} 未返回成交明细，按券商持仓变化补记卖出 "
+            f"{self.code_name_fn(code)} {inferred_qty}股 @ {ordered_price:.3f}"
+        )
+        self._sync_delayed_sell_fill(
+            code,
+            ordered_price,
+            inferred_qty,
+            order_id,
+            reason,
+            {"commission": -1.0},
+        )
+        return True
 
     def _apply_buy_fill(self, code: str, price: float, quantity: int, order_id: int, reason: str) -> None:
         if price <= 0 or quantity <= 0:

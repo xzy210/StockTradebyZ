@@ -483,8 +483,10 @@ class ETFThreeFactorMomentumStrategyFast(BaseStrategy):
         reason = ""
 
         if current_score is None:
-            should_rebalance = True
-            reason = "初始建仓"
+            min_buy_score = float(self.params.get('min_buy_score', 0.0) or 0.0)
+            if top_score >= min_buy_score:
+                should_rebalance = True
+                reason = "初始建仓"
         elif top_code != self.current_holding:
             threshold = self.params['rebalance_threshold']
             if top_score > current_score * threshold:

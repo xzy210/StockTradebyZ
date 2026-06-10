@@ -54,6 +54,7 @@ class RotationRuntimeService:
         scores_fn: Optional[Callable[[dict], None]] = None,
         notify_signal_fn: Optional[Callable[[str, dict, Optional[str], Optional[str], str], None]] = None,
         execute_rebalance_fn: Optional[Callable[[RebalanceIntent], list[Any]]] = None,
+        pending_order_sync_fn: Optional[Callable[[], int]] = None,
         code_name_fn: Optional[Callable[[str], str]] = None,
         data_service: Optional[RotationDataService] = None,
         event_bus: Optional[EventBus] = None,
@@ -81,6 +82,7 @@ class RotationRuntimeService:
             lambda signal, scores, current, target, reason: None
         )
         self.execute_rebalance_fn = execute_rebalance_fn
+        self.pending_order_sync_fn = pending_order_sync_fn
         self.code_name_fn = code_name_fn or (lambda code: code)
         self.event_bus = event_bus
         self.now_fn = now_fn
@@ -255,6 +257,11 @@ class RotationRuntimeService:
             return result
 
         try:
+            if self.pending_order_sync_fn is not None:
+                synced_orders = int(self.pending_order_sync_fn() or 0)
+                if synced_orders > 0:
+                    self.logger_fn(f"🔄 已同步 {synced_orders} 条未完成 ETF 委托状态")
+
             if self.guard_service.in_drawdown_cooldown():
                 result["signal"] = "COOLDOWN"
                 result["reason"] = f"回撤保护冷却期（剩余{self.state.cooldown_remaining}天）"
@@ -320,6 +327,29 @@ class RotationRuntimeService:
             )
             if filtered:
                 self.logger_fn(f"📅 {reason}")
+
+            if signal in {"BUY", "SWITCH"} and self.ledger_service.has_active_order_records():
+                active_orders = self.ledger_service.active_order_records()
+                first_order = active_orders[0] if active_orders else {}
+                result["signal"] = "BLOCKED"
+                result["target"] = target
+                result["reason"] = (
+                    "存在未完成 ETF 委托，禁止生成新的买入信号: "
+                    f"#{first_order.get('order_id', '')} "
+                    f"{first_order.get('action', '')} "
+                    f"{first_order.get('code', '')} "
+                    f"status={first_order.get('status', '')}"
+                )
+                result["scores"] = scores
+                self.logger_fn(f"⛔ {result['reason']}")
+                self.signal_fn(result["signal"], result)
+                self.state_mgr.update_check_result(result["signal"], scores)
+                self.status_fn(result["reason"])
+                finalize_schedule("completed")
+                self._publish_event("rebalance_blocked", result["reason"], run_id=run_id, payload={"result": result})
+                self._publish_event("run_completed", "ETF rotation live signal check blocked", run_id=run_id, payload={"result": result})
+                self.logger_fn("=" * 50)
+                return result
 
             result["signal"] = signal
             result["target"] = target

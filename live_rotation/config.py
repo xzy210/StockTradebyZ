@@ -38,6 +38,7 @@ class RotationConfig:
     momentum_window: int = 25
     zscore_window: int = 60
     empty_threshold: float = -0.5
+    min_buy_score: float = 0.0          # 空仓/初始建仓时，最高分需达到此阈值才买入
     enable_empty_position: bool = True
     rebalance_period: int = 1            # 调仓周期（交易日）: 1=每日, 5=每周, 20=每月
 
@@ -87,6 +88,7 @@ class RotationConfig:
             'momentum_window': self.momentum_window,
             'zscore_window': self.zscore_window,
             'empty_threshold': self.empty_threshold,
+            'min_buy_score': self.min_buy_score,
             'enable_empty_position': self.enable_empty_position,
             'rebalance_period': self.rebalance_period,
             'enable_trailing_stop': self.enable_trailing_stop,

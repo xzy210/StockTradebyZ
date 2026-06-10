@@ -145,6 +145,14 @@ class RotationDecisionService:
         holding_score = scores.get(holding) if holding else None
 
         if holding is None or holding_score is None:
+            min_buy_score = float(getattr(self.config, "min_buy_score", 0.0) or 0.0)
+            if top_score < min_buy_score:
+                return (
+                    "NO_ACTION",
+                    None,
+                    f"空仓中，最高分 {self.code_name_fn(top_code)}({top_score:.4f}) "
+                    f"低于最低买入分数 {min_buy_score:.4f}",
+                )
             return (
                 "BUY",
                 top_code,

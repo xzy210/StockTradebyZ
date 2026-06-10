@@ -1122,6 +1122,15 @@ class ETFRotationLiveWidget(QWidget):
         grid.addWidget(self.spin_empty, row, 3)
         row += 1
 
+        grid.addWidget(QLabel("最低买入分数:"), row, 0)
+        self.spin_min_buy_score = _FocusDoubleSpinBox()
+        self.spin_min_buy_score.setRange(-3, 3)
+        self.spin_min_buy_score.setSingleStep(0.1)
+        self.spin_min_buy_score.setDecimals(2)
+        self.spin_min_buy_score.setValue(getattr(cfg, "min_buy_score", 0.0))
+        grid.addWidget(self.spin_min_buy_score, row, 1)
+        row += 1
+
         grid.addWidget(QLabel("调仓周期:"), row, 0)
         self.combo_rebalance_period = _FocusComboBox()
         _period_options = [
@@ -1409,6 +1418,8 @@ class ETFRotationLiveWidget(QWidget):
         self.spin_zscore.setValue(cfg.zscore_window)
         self.chk_empty.setChecked(cfg.enable_empty_position)
         self.spin_empty.setValue(cfg.empty_threshold)
+        if hasattr(self, "spin_min_buy_score"):
+            self.spin_min_buy_score.setValue(getattr(cfg, "min_buy_score", 0.0))
         idx = self.combo_rebalance_period.findData(getattr(cfg, "rebalance_period", 1))
         if idx >= 0:
             self.combo_rebalance_period.setCurrentIndex(idx)
@@ -1491,6 +1502,8 @@ class ETFRotationLiveWidget(QWidget):
         cfg.zscore_window = self.spin_zscore.value()
         cfg.enable_empty_position = self.chk_empty.isChecked()
         cfg.empty_threshold = self.spin_empty.value()
+        if hasattr(self, "spin_min_buy_score"):
+            cfg.min_buy_score = self.spin_min_buy_score.value()
         cfg.rebalance_period = self.combo_rebalance_period.currentData()
         cfg.enable_trailing_stop = self.chk_trailing_stop.isChecked()
         cfg.trailing_stop_pct = self.spin_trailing_pct.value() / 100
