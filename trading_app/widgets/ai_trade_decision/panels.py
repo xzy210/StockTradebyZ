@@ -165,7 +165,6 @@ from trading_app.widgets.ai_trade_decision.helpers import (
 from trading_app.widgets.ai_trade_decision.order_execution_panel import OrderExecutionPanel
 from trading_app.widgets.ai_trade_decision.workers import (
     _AccountRefreshWorker,
-    _ClientActionWorker,
     _ClientStatusWorker,
     _ReconcileCatchupWorker,
 )
@@ -1059,7 +1058,7 @@ class AITradeDecisionPanel(QWidget):
             "可能原因包括：实时行情未刷新、盘口不可用、日线拉取失败，或 miniQMT 会话异常。\n\n"
             "请执行以下操作：\n"
             "1. 先确认 miniQMT 已登录且行情在刷新\n"
-            "2. 若实时行情/盘口长期无更新，再完全关闭并重启 miniQMT\n"
+            "2. 确认本地 miniQMT 会话处于正常连接状态\n"
             "3. 等待行情连接就绪后重试\n\n"
             "本次定时任务将跳过，数据可能不是最新。",
         )
@@ -1103,7 +1102,7 @@ class AITradeDecisionPanel(QWidget):
             return
         started = self.startup_orchestrator.start()
         if started:
-            self.account_panel.show_client_workflow_status("启动自检中...", success=None)
+            self.account_panel.show_client_workflow_status("连接自检中...", success=None)
 
     def _on_startup_status(self, message: str):
         self.statusBar().showMessage(message)

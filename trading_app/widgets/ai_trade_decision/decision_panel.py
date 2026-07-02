@@ -188,7 +188,6 @@ from trading_app.widgets.ai_trade_decision.helpers import (
 from trading_app.widgets.ai_trade_decision.order_execution_panel import OrderExecutionPanel
 from trading_app.widgets.ai_trade_decision.workers import (
     _AccountRefreshWorker,
-    _ClientActionWorker,
     _ClientStatusWorker,
     _ReconcileCatchupWorker,
 )

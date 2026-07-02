@@ -773,11 +773,11 @@ class LiveStrategyHubWidget(QWidget):
             return
         started = self.startup_orchestrator.start()
         if started:
-            self.broker_panel.show_client_workflow_status("启动自检中...", success=None)
+            self.broker_panel.show_client_workflow_status("连接自检中...", success=None)
             self.task_orchestrator_service.record_runtime(
                 "startup_check",
                 status="running",
-                message="启动自检中...",
+                message="连接自检中...",
                 trigger="manual_or_auto",
                 started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             )

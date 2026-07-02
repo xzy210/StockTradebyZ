@@ -15,7 +15,6 @@ from uuid import uuid4
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
-from common.credential_store import DEFAULT_SERVICE_NAME, delete_password, save_password
 from common.io_utils import atomic_write_json
 from common.qmt_client_service import QmtClientService
 
@@ -134,7 +133,6 @@ class _BrokerConnectWorker(QThread):
         self.account = str(self.config.get("account", "") or "").strip()
         self.connect_timeout_seconds = max(float(self.config.get("broker_connect_timeout_seconds", 25.0) or 25.0), 5.0)
         self.connect_retry_count = max(int(self.config.get("broker_connect_retry_count", 2) or 2), 1)
-        self.ready_settle_seconds = max(float(self.config.get("broker_ready_settle_seconds", 6.0) or 6.0), 0.0)
         self._cancel_event = threading.Event()
         self._signal_relay = signal_relay
 
@@ -152,24 +150,6 @@ class _BrokerConnectWorker(QThread):
         try:
             if self._is_cancelled():
                 return
-            client_service = QmtClientService(self.config)
-            ready, ready_message = client_service.ensure_ready(status_callback=self._log)
-            if self._is_cancelled():
-                return
-            self._log(ready_message)
-            if not ready:
-                if not self._is_cancelled():
-                    self.failed.emit(ready_message)
-                return
-
-            if self.ready_settle_seconds > 0:
-                self._log(f"等待 QMT 就绪 {self.ready_settle_seconds:.1f} 秒...")
-                waited = 0.0
-                while waited < self.ready_settle_seconds:
-                    if self._is_cancelled():
-                        return
-                    time.sleep(min(0.2, self.ready_settle_seconds - waited))
-                    waited += 0.2
 
             last_error = "连接 QMT 交易端失败"
             for attempt in range(1, self.connect_retry_count + 1):
@@ -401,22 +381,7 @@ class BrokerSessionService(QObject):
         return {
             "qmt_path": str(source.get("qmt_path", "") or "").strip(),
             "account": str(source.get("account", "") or "").strip(),
-            "qmt_exe_path": str(source.get("qmt_exe_path", "") or "").strip(),
-            "login_username": str(source.get("login_username", "") or "").strip(),
-            "login_password": str(source.get("login_password", "") or "").strip(),
-            "credential_service": str(source.get("credential_service", "") or DEFAULT_SERVICE_NAME).strip() or DEFAULT_SERVICE_NAME,
-            "password_stored": bool(source.get("password_stored", False)),
-            "auto_launch": bool(source.get("auto_launch", True)),
-            "auto_login": bool(source.get("auto_login", False)),
-            "window_title_hint": str(source.get("window_title_hint", "") or "").strip(),
             "process_name": str(source.get("process_name", "") or "").strip(),
-            "login_button_rel_x": float(source.get("login_button_rel_x", 0.38) or 0.38),
-            "login_button_rel_y": float(source.get("login_button_rel_y", 0.855) or 0.855),
-            "login_initial_delay_seconds": float(source.get("login_initial_delay_seconds", 5.0) or 5.0),
-            "login_retry_interval_seconds": float(source.get("login_retry_interval_seconds", 1.2) or 1.2),
-            "login_max_attempts": int(source.get("login_max_attempts", 15) or 15),
-            "post_launch_wait_seconds": float(source.get("post_launch_wait_seconds", 15.0) or 15.0),
-            "broker_ready_settle_seconds": float(source.get("broker_ready_settle_seconds", 6.0) or 6.0),
             "broker_connect_timeout_seconds": float(source.get("broker_connect_timeout_seconds", 25.0) or 25.0),
             "broker_connect_retry_count": int(source.get("broker_connect_retry_count", 2) or 2),
         }
@@ -444,23 +409,6 @@ class BrokerSessionService(QObject):
                 "account": account.strip(),
             })
             data = self._normalize_config(merged)
-
-        username = data.get("login_username", "")
-        service_name = data.get("credential_service", DEFAULT_SERVICE_NAME)
-        raw_password = data.get("login_password", "")
-        clear_password = bool(extra.get("clear_login_password", False)) if not isinstance(qmt_path, dict) else False
-
-        if clear_password and username:
-            delete_password(username, service_name=service_name)
-            data["login_password"] = ""
-            data["password_stored"] = False
-        elif raw_password and username:
-            stored = save_password(username, raw_password, service_name=service_name)
-            data["password_stored"] = stored
-            if stored:
-                data["login_password"] = ""
-        else:
-            data["password_stored"] = bool(data.get("password_stored", False))
 
         atomic_write_json(self._primary_config_path, data)
         self._last_config = data
@@ -606,31 +554,6 @@ class BrokerSessionService(QObject):
         status = QmtClientService(self._last_config).get_status().to_dict()
         self._set_cached_client_status(None)
         return status
-
-    def launch_client(self) -> tuple[bool, str, dict]:
-        self.reload_config()
-        client_service = QmtClientService(self._last_config)
-        if bool(self._last_config.get("auto_login", False)):
-            ok, message = client_service.launch_and_login(status_callback=self._emit_log)
-        else:
-            ok, message = client_service.launch(status_callback=self._emit_log)
-        status = self.get_client_status()
-        self.client_state_changed.emit(status)
-        return ok, message, status
-
-    def login_client(self) -> tuple[bool, str, dict]:
-        self.reload_config()
-        ok, message = QmtClientService(self._last_config).login(status_callback=self._emit_log)
-        status = self.get_client_status()
-        self.client_state_changed.emit(status)
-        return ok, message, status
-
-    def close_client(self) -> tuple[bool, str, dict]:
-        self.reload_config()
-        ok, message = QmtClientService(self._last_config).close(status_callback=self._emit_log)
-        status = self.get_client_status()
-        self.client_state_changed.emit(status)
-        return ok, message, status
 
     def _require_connected(self):
         if not self.is_connected:

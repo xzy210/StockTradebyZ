@@ -60,7 +60,7 @@ def _check_update_output_freshness(data_dir: Path, code: str, subdir: str = "") 
 def _run_xtquant_daily_history_precheck() -> tuple[bool, str]:
     """Verify miniQMT can really fetch the latest daily K-line, not only connect."""
     return run_xtquant_daily_history_precheck(
-        action_hint="请先重启 miniQMT 后再更新/执行策略。",
+        action_hint="请确认 miniQMT 已正常运行并登录后再更新/执行策略。",
     )
 
 

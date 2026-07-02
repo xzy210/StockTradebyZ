@@ -35,32 +35,6 @@ class _ClientStatusWorker(QThread):
             self.failed_status.emit(str(exc))
 
 
-class _ClientActionWorker(QThread):
-    finished_action = pyqtSignal(str, bool, str, dict)
-    failed_action = pyqtSignal(str, str)
-
-    def __init__(self, broker, action: str, parent=None):
-        super().__init__(parent)
-        self.broker = broker
-        self.action = action
-
-    def run(self):
-        try:
-            if self.action == "launch":
-                ok, message, status = self.broker.launch_client()
-            elif self.action == "login":
-                ok, message, status = self.broker.login_client()
-            elif self.action == "close":
-                if self.broker.is_connected:
-                    self.broker.disconnect()
-                ok, message, status = self.broker.close_client()
-            else:
-                raise ValueError(f"unsupported action: {self.action}")
-            self.finished_action.emit(self.action, ok, message, status)
-        except Exception as exc:
-            self.failed_action.emit(self.action, str(exc))
-
-
 class BrokerConnectionPanel(QGroupBox):
     broker_connected = pyqtSignal()
     broker_disconnected = pyqtSignal()
@@ -69,7 +43,6 @@ class BrokerConnectionPanel(QGroupBox):
         super().__init__("miniQMT 连接", parent)
         self.broker = get_broker_session_service()
         self._status_worker = None
-        self._action_worker = None
         self._was_connected = bool(self.broker.is_connected)
         self._setup_ui()
         self._load_config()
@@ -95,18 +68,6 @@ class BrokerConnectionPanel(QGroupBox):
         layout.addLayout(top_row)
 
         action_row = QHBoxLayout()
-        self.launch_btn = QPushButton("启动")
-        self.launch_btn.clicked.connect(self._on_launch_clicked)
-        action_row.addWidget(self.launch_btn)
-
-        self.login_btn = QPushButton("登录")
-        self.login_btn.clicked.connect(self._on_login_clicked)
-        action_row.addWidget(self.login_btn)
-
-        self.close_btn = QPushButton("关闭")
-        self.close_btn.clicked.connect(self._on_close_clicked)
-        action_row.addWidget(self.close_btn)
-
         self.connect_btn = QPushButton("连接券商")
         self.connect_btn.clicked.connect(self._on_connect_clicked)
         action_row.addWidget(self.connect_btn)
@@ -227,14 +188,8 @@ class BrokerConnectionPanel(QGroupBox):
     def _apply_client_status(self, status: dict):
         message = status.get("message", "未检测")
         self.client_status_label.setText(f"客户端: {message}")
-        login_visible = bool(status.get("login_window_visible"))
         running = bool(status.get("running"))
-        self.launch_btn.setEnabled(not running)
-        self.login_btn.setEnabled(running)
-        self.close_btn.setEnabled(running)
-        if login_visible:
-            self.client_status_label.setStyleSheet("color:#D97706;")
-        elif running:
+        if running:
             self.client_status_label.setStyleSheet("color:#16A34A;")
         else:
             self.client_status_label.setStyleSheet("color:#888;")
@@ -246,36 +201,3 @@ class BrokerConnectionPanel(QGroupBox):
         self.client_status_label.setStyleSheet("color:#DC2626;")
         self._status_worker = None
 
-    def _on_launch_clicked(self):
-        self._run_client_action("launch", "正在启动 miniQMT...")
-
-    def _on_login_clicked(self):
-        self._run_client_action("login", "正在登录 miniQMT...")
-
-    def _on_close_clicked(self):
-        self._run_client_action("close", "正在关闭 miniQMT...")
-
-    def _run_client_action(self, action: str, pending_text: str):
-        if self._action_worker and self._action_worker.isRunning():
-            return
-        self.launch_btn.setEnabled(False)
-        self.login_btn.setEnabled(False)
-        self.close_btn.setEnabled(False)
-        self.client_status_label.setText(f"客户端: {pending_text}")
-        self.client_status_label.setStyleSheet("color:#D97706;")
-        self._action_worker = _ClientActionWorker(self.broker, action, parent=self)
-        self._action_worker.finished_action.connect(self._on_client_action_finished)
-        self._action_worker.failed_action.connect(self._on_client_action_failed)
-        self._action_worker.start()
-
-    def _on_client_action_finished(self, _action: str, success: bool, message: str, _status: dict):
-        self._action_worker = None
-        self.client_status_label.setText(f"客户端: {message}")
-        self.client_status_label.setStyleSheet("color:#16A34A;" if success else "color:#DC2626;")
-        self._refresh_client_status_safe()
-
-    def _on_client_action_failed(self, _action: str, message: str):
-        self._action_worker = None
-        self.client_status_label.setText(f"客户端: {message}")
-        self.client_status_label.setStyleSheet("color:#DC2626;")
-        self._refresh_client_status_safe()

@@ -54,32 +54,6 @@ class _ClientStatusWorker(QThread):
             self.failed_status.emit(str(exc))
 
 
-class _ClientActionWorker(QThread):
-    finished_action = pyqtSignal(str, bool, str, dict)
-    failed_action = pyqtSignal(str, str)
-
-    def __init__(self, broker, action: str, parent=None):
-        super().__init__(parent)
-        self.broker = broker
-        self.action = action
-
-    def run(self):
-        try:
-            if self.action == "launch":
-                ok, message, status = self.broker.launch_client()
-            elif self.action == "login":
-                ok, message, status = self.broker.login_client()
-            elif self.action == "close":
-                if self.broker.is_connected:
-                    self.broker.disconnect()
-                ok, message, status = self.broker.close_client()
-            else:
-                raise RuntimeError(f"未知的客户端动作: {self.action}")
-            self.finished_action.emit(self.action, ok, message, status)
-        except Exception as exc:
-            self.failed_action.emit(self.action, str(exc))
-
-
 class _ReconcileCatchupWorker(QThread):
     finished_reconcile = pyqtSignal(bool, str)
     failed_reconcile = pyqtSignal(str)

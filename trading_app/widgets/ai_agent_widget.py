@@ -2219,18 +2219,7 @@ class AIAgentWidget(QWidget):
         success = False
         message = ""
 
-        if action == "open_qmt":
-            title = "启动 miniQMT"
-            success, message, _status = broker_service.launch_client()
-        elif action == "login_qmt":
-            title = "登录 miniQMT"
-            success, message, _status = broker_service.login_client()
-        elif action == "close_qmt":
-            title = "关闭 miniQMT"
-            if broker_service.is_connected:
-                broker_service.disconnect()
-            success, message, _status = broker_service.close_client()
-        elif action == "connect_broker":
+        if action == "connect_broker":
             title = "连接券商"
             config = broker_service.get_config()
             qmt_path = config.get("qmt_path", "").strip()

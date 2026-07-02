@@ -9,7 +9,6 @@ from .order_execution_panel import OrderExecutionPanel
 from .panels import AITradeDecisionPanel, AITradeDecisionWindow, UnmanagedPositionPanel
 from .workers import (
     _AccountRefreshWorker,
-    _ClientActionWorker,
     _ClientStatusWorker,
     _ReconcileCatchupWorker,
 )
@@ -25,7 +24,6 @@ __all__ = [
     "CollapsibleStepCard",
     "OrderExecutionPanel",
     "_AccountRefreshWorker",
-    "_ClientActionWorker",
     "_ClientStatusWorker",
     "_ReconcileCatchupWorker",
 ]

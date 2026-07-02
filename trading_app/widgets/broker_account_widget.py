@@ -74,50 +74,14 @@ class BrokerConfigDialog(QDialog):
         path_layout.addWidget(browse_btn)
         form_layout.addRow("QMT数据路径:", path_layout)
 
-        # QMT exe path
-        exe_layout = QHBoxLayout()
-        self.exe_edit = QLineEdit(self._config.get("qmt_exe_path", ""))
-        self.exe_edit.setPlaceholderText("D:\\中金财富QMT个人版交易端\\miniqmt.exe")
-        exe_btn = QPushButton("浏览")
-        exe_btn.clicked.connect(self.browse_exe_path)
-        exe_layout.addWidget(self.exe_edit)
-        exe_layout.addWidget(exe_btn)
-        form_layout.addRow("QMT程序路径:", exe_layout)
-        
         # Account
         self.account_edit = QLineEdit(self._config.get("account", ""))
         self.account_edit.setPlaceholderText("输入资金账号")
         form_layout.addRow("资金账号:", self.account_edit)
 
-        self.login_user_edit = QLineEdit(self._config.get("login_username", ""))
-        self.login_user_edit.setPlaceholderText("输入 miniQMT 登录账号")
-        form_layout.addRow("登录账号:", self.login_user_edit)
-
-        self.login_password_edit = QLineEdit("")
-        self.login_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        password_hint = "留空则保留系统已保存密码"
-        if self._config.get("login_password"):
-            password_hint = "当前使用本地配置密码，重新输入可覆盖"
-        elif self._config.get("password_stored"):
-            password_hint = "密码已保存到系统凭据，留空则保持不变"
-        self.login_password_edit.setPlaceholderText(password_hint)
-        form_layout.addRow("登录密码:", self.login_password_edit)
-
-        self.window_title_hint_edit = QLineEdit(self._config.get("window_title_hint", ""))
-        self.window_title_hint_edit.setPlaceholderText("可选，用于匹配登录窗口标题")
-        form_layout.addRow("窗口标题提示:", self.window_title_hint_edit)
-
         self.process_name_edit = QLineEdit(self._config.get("process_name", ""))
         self.process_name_edit.setPlaceholderText("可选，例如 miniqmt.exe")
         form_layout.addRow("进程名提示:", self.process_name_edit)
-
-        self.auto_launch_cb = QCheckBox("连接券商前自动启动 miniQMT")
-        self.auto_launch_cb.setChecked(bool(self._config.get("auto_launch", True)))
-        form_layout.addRow("", self.auto_launch_cb)
-
-        self.auto_login_cb = QCheckBox("检测到登录窗口时自动点击登录，必要时再回填账号密码")
-        self.auto_login_cb.setChecked(bool(self._config.get("auto_login", False)))
-        form_layout.addRow("", self.auto_login_cb)
         
         layout.addLayout(form_layout)
         
@@ -137,26 +101,13 @@ class BrokerConfigDialog(QDialog):
         if path:
             self.path_edit.setText(path)
 
-    def browse_exe_path(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择 miniQMT 程序", "", "Executable (*.exe)")
-        if path:
-            self.exe_edit.setText(path)
-            
     def get_config(self):
         config = dict(self._config)
         config.update({
             "qmt_path": self.path_edit.text().strip(),
-            "qmt_exe_path": self.exe_edit.text().strip(),
             "account": self.account_edit.text().strip(),
-            "login_username": self.login_user_edit.text().strip(),
-            "window_title_hint": self.window_title_hint_edit.text().strip(),
             "process_name": self.process_name_edit.text().strip(),
-            "auto_launch": self.auto_launch_cb.isChecked(),
-            "auto_login": self.auto_login_cb.isChecked(),
         })
-        password = self.login_password_edit.text().strip()
-        if password:
-            config["login_password"] = password
         return config
 
 
@@ -447,10 +398,7 @@ class BrokerAccountWidget(QWidget):
         config = self.broker_session_service.get_config()
         self.qmt_path = config.get("qmt_path", "")
         self.account = config.get("account", "")
-        self.qmt_exe_path = config.get("qmt_exe_path", "")
-        self.login_username = config.get("login_username", "")
-        self.auto_launch = bool(config.get("auto_launch", True))
-        self.auto_login = bool(config.get("auto_login", False))
+        self.process_name = config.get("process_name", "")
         logger.info(f"✓ 配置加载成功: qmt_path={self.qmt_path}, account={self.account}")
     
     def save_config(self):
@@ -459,15 +407,8 @@ class BrokerAccountWidget(QWidget):
             self.broker_session_service.save_config({
                 "qmt_path": self.qmt_path,
                 "account": self.account,
-                "qmt_exe_path": getattr(self, "qmt_exe_path", ""),
-                "login_username": getattr(self, "login_username", ""),
-                "auto_launch": getattr(self, "auto_launch", True),
-                "auto_login": getattr(self, "auto_login", False),
-                "window_title_hint": getattr(self, "window_title_hint", ""),
                 "process_name": getattr(self, "process_name", ""),
-                "login_password": getattr(self, "_pending_login_password", ""),
             })
-            self._pending_login_password = ""
             logger.info(f"✓ 配置已保存: {self.config_path}")
         except Exception as e:
             logger.error(f"✗ 保存配置失败: {e}")
@@ -476,11 +417,6 @@ class BrokerAccountWidget(QWidget):
     def _on_broker_config_changed(self, config: dict):
         self.qmt_path = config.get("qmt_path", self.qmt_path)
         self.account = config.get("account", self.account)
-        self.qmt_exe_path = config.get("qmt_exe_path", getattr(self, "qmt_exe_path", ""))
-        self.login_username = config.get("login_username", getattr(self, "login_username", ""))
-        self.auto_launch = bool(config.get("auto_launch", getattr(self, "auto_launch", True)))
-        self.auto_login = bool(config.get("auto_login", getattr(self, "auto_login", False)))
-        self.window_title_hint = config.get("window_title_hint", getattr(self, "window_title_hint", ""))
         self.process_name = config.get("process_name", getattr(self, "process_name", ""))
 
     def _sync_from_session(self):
@@ -1151,13 +1087,7 @@ class BrokerAccountWidget(QWidget):
             config = dialog.get_config()
             self.qmt_path = config.get("qmt_path", "")
             self.account = config.get("account", "")
-            self.qmt_exe_path = config.get("qmt_exe_path", "")
-            self.login_username = config.get("login_username", "")
-            self.auto_launch = bool(config.get("auto_launch", True))
-            self.auto_login = bool(config.get("auto_login", False))
-            self.window_title_hint = config.get("window_title_hint", "")
             self.process_name = config.get("process_name", "")
-            self._pending_login_password = config.get("login_password", "")
             self.save_config()
             self.append_log("配置已更新")
     

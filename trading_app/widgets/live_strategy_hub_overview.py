@@ -122,7 +122,7 @@ class _LiveStrategyOverviewWidget(QWidget):
         self.connectivity_card.set_body([
             f"券商连接：{'已连接' if broker_connected else '未连接'}",
             f"QMT状态：{'运行中' if qmt_running else '未就绪'}",
-            f"启动自检：{'进行中' if startup_running else '空闲'}",
+            f"连接自检：{'进行中' if startup_running else '空闲'}",
             f"统一执行模式：{mode}",
             f"手动委托：{'开启' if manual_enabled else '关闭'}",
             f"交易时段闸：{'开启' if require_trading_time else '关闭'}",

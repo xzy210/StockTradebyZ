@@ -30,7 +30,7 @@ _LEVEL_LABELS = {
     "success": "成功",
 }
 _CATEGORY_LABELS = {
-    "startup": "启动自检",
+    "startup": "连接自检",
     "broker_error": "券商异常",
     "broker_disconnected": "券商断开",
     "order_exception": "异常委托",
@@ -100,7 +100,7 @@ class LiveStrategyAlertCenterWidget(QWidget):
         self.category_combo = QComboBox()
         self.category_combo.addItem("全部", "")
         for item in [
-            ("启动自检", "startup"),
+            ("连接自检", "startup"),
             ("券商异常", "broker_error"),
             ("券商断开", "broker_disconnected"),
             ("异常委托", "order_exception"),

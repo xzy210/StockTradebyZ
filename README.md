@@ -17,7 +17,7 @@
 策略研究台（自动化研究 + 回测）：ETF 轮动研究、ETF 网格回测、截面回测、因子库、AI 训练和实验记录。
 
 2. `run_live_strategy_center.py`
-实盘策略中枢（自动化实盘）：AI 策略、ETF 轮动、账户、风控、任务、告警、收益、运行日志、QMT 启动自检及日终流程。
+实盘策略中枢（自动化实盘）：AI 策略、ETF 轮动、账户、风控、任务、告警、收益、运行日志、券商连接自检及日终流程。
 
 3. `main.py`（+ `run.bat`）
 人工看盘 + 人工下单终端：K 线、分时、自选股、模拟交易、热门板块、筹码分布等。与自动化策略并存，**保持独立**，不合入研究台。
@@ -47,11 +47,9 @@ AI 实盘决策已统一从 `run_live_strategy_center.py` 的 AI Tab 进入，�
 ### 3. 共享基础设施层
 
 - `common/`
-提供跨应用共用能力，例如券商会话、miniQMT 启动与登录、凭据存储、通用策略面板等。
+提供跨应用共用能力，例如券商会话、miniQMT 状态展示、通用策略面板等。
 - `common/qmt_client_service.py`
-负责 miniQMT 生命周期管理、自动登录及 `xtquant.connect()` 复核。
-- `common/credential_store.py`
-负责本地凭据存取。
+负责 miniQMT 进程状态展示；实际交易连接由券商会话服务直接通过 `xtquant.connect()` 完成。
 
 ### 4. 数据与研究层
 

@@ -157,7 +157,7 @@ class KlineFullRefreshService:
     def _check_xtquant_daily_history(cb: StatusCallback) -> Tuple[bool, str]:
         cb("验证 miniQMT 是否可完整获取最近10天历史K线...")
         ok, msg = run_xtquant_daily_history_precheck(
-            action_hint="请先重启 miniQMT 后再执行全量K线刷新。",
+            action_hint="请确认 miniQMT 已正常运行并登录后再执行全量K线刷新。",
             require_recent_daily_history=True,
             recent_calendar_days=10,
         )

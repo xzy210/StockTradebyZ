@@ -59,11 +59,11 @@ class LiveStrategyHubController(QObject):
         self.task_service.register_task(
             task_key="startup_check",
             task_type="system",
-            title="启动自检",
+            title="连接自检",
             provider=self._task_provider_startup,
             strategy_id=self.CENTER_STRATEGY_ID,
             strategy_name=self.CENTER_STRATEGY_NAME,
-            actions={"立即执行": lambda: self._run_action(startup_action, "已触发启动自检")},
+            actions={"立即执行": lambda: self._run_action(startup_action, "已触发连接自检")},
         )
         self.task_service.register_task(
             task_key="morning_freshness",

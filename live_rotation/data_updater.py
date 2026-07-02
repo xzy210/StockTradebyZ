@@ -54,7 +54,7 @@ def _parquet_path(data_dir: Path, code: str) -> Path:
 
 def _run_xtquant_daily_history_precheck() -> Tuple[bool, str]:
     return run_xtquant_daily_history_precheck(
-        action_hint="请先重启 miniQMT 后再更新/执行ETF轮动实盘。",
+        action_hint="请确认 miniQMT 已正常运行并登录后再更新/执行ETF轮动实盘。",
     )
 
 

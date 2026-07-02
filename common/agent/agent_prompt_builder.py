@@ -46,7 +46,7 @@ class AgentPromptBuilder:
             "- 涉及交易建议时，请同时说明依据、风险点、失效条件。",
             "- 如果系统补充了证据摘要，请优先基于证据回答，并明确哪些结论来自现有证据。",
             "- 如果上下文不足，请明确指出缺少什么数据。",
-            "- 如果用户明确要求你去启动、登录、关闭 miniQMT 或连接券商，请不要声称已经执行；你只能提出动作意图，等待界面确认执行。",
+            "- 如果用户明确要求你连接券商，请不要声称已经执行；你只能提出动作意图，等待界面确认执行。",
         ]
 
         if task_mode in (
@@ -87,10 +87,10 @@ class AgentPromptBuilder:
 
         sections.extend([
             "",
-            "miniQMT 动作协议:",
-            '- 当且仅当用户明确要求执行 miniQMT / 券商控制动作时，在正文最后额外输出一个 `<agent_action>` JSON 块。',
-            '- 允许的 action 只有: `open_qmt`、`login_qmt`、`close_qmt`、`connect_broker`。',
-            '- 示例: `<agent_action>{\"action\":\"open_qmt\",\"reason\":\"用户要求启动交易客户端\",\"requires_confirmation\":true}</agent_action>`',
+            "券商连接动作协议:",
+            '- 当且仅当用户明确要求连接券商时，在正文最后额外输出一个 `<agent_action>` JSON 块。',
+            '- 允许的 action 只有: `connect_broker`。',
+            '- 示例: `<agent_action>{\"action\":\"connect_broker\",\"reason\":\"用户要求连接券商会话\",\"requires_confirmation\":true}</agent_action>`',
             "- 除这个 JSON 块外，仍然要先用自然语言说明你为什么建议执行该动作。",
             "",
             "输出协议:",

@@ -221,7 +221,7 @@ class AlertEventService(QObject):
         )
 
     def _on_qmt_finished(self, success: bool, message: str) -> None:
-        # 成功的启动自检由实盘任务/状态栏展示；实盘事件页只关注失败与异常。
+        # 成功的连接自检由实盘任务/状态栏展示；实盘事件页只关注失败与异常。
         if success:
             return
         self.record_event(
@@ -229,7 +229,7 @@ class AlertEventService(QObject):
             level="danger",
             category="startup",
             source="qmt_startup",
-            title="启动自检失败",
+            title="连接自检失败",
             message=message,
         )
 

@@ -3,7 +3,7 @@
 """独立启动实盘策略中枢。
 
 运行方式:
-    python run_live_strategy_center.py
+    python run_live.py
 """
 from __future__ import annotations
 

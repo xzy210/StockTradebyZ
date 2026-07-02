@@ -243,7 +243,7 @@ class HubStateService(QObject):
             items.append("今日日终：失败")
         if startup_running:
             raise_level("warning")
-            items.append("启动自检中")
+            items.append("连接自检中")
 
         label_map = {
             "ok": "风控: 正常",

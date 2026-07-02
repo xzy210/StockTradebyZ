@@ -245,7 +245,7 @@ def update_rotation_etf_pool(
         return 0, len(codes), [msg]
 
     history_ok, history_msg = run_xtquant_daily_history_precheck(
-        action_hint="请先重启 miniQMT 后再更新/执行ETF轮动实盘。",
+        action_hint="请确认 miniQMT 已正常运行并登录后再更新/执行ETF轮动实盘。",
     )
     if not history_ok:
         return 0, len(codes), [history_msg]

@@ -1275,20 +1275,20 @@ class ETFRotationLiveWidget(QWidget):
             return
         started = self.startup_orchestrator.start()
         if started:
-            self.broker_panel.show_client_workflow_status("启动自检中...", success=None)
-            self._on_log("启动后自动执行 QMT 自检流程")
+            self.broker_panel.show_client_workflow_status("连接自检中...", success=None)
+            self._on_log("启动后自动执行券商连接自检")
 
     def _on_startup_status(self, message: str):
         self.broker_panel.show_client_workflow_status(message, success=None)
-        self._on_log(f"QMT启动流程: {message}")
+        self._on_log(f"QMT连接流程: {message}")
 
     def _on_startup_finished(self, success: bool, message: str):
         self.broker_panel.show_client_workflow_status(message, success=success)
         self.broker_panel.refresh_client_status()
         if success:
-            self._on_log(f"QMT启动流程完成: {message}")
+            self._on_log(f"QMT连接流程完成: {message}")
         else:
-            self._on_log(f"QMT启动流程失败: {message}")
+            self._on_log(f"QMT连接流程失败: {message}")
         self._restore_auto_mode_if_needed()
 
     def _restore_auto_mode_if_needed(self):

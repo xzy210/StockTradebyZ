@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-ALLOWED_AGENT_ACTIONS = {"open_qmt", "login_qmt", "close_qmt", "connect_broker"}
+ALLOWED_AGENT_ACTIONS = {"connect_broker"}
 
 
 @dataclass
@@ -18,9 +18,6 @@ class AgentActionIntent:
     @property
     def label(self) -> str:
         return {
-            "open_qmt": "启动 miniQMT",
-            "login_qmt": "登录 miniQMT",
-            "close_qmt": "关闭 miniQMT",
             "connect_broker": "连接券商会话",
         }.get(self.action, self.action)
 
