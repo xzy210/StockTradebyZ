@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "strategy_budget_config.json"
 _STATE_PATH = Path(__file__).resolve().parents[2] / "data" / "strategy_budget_state.json"
+_UNMANAGED_RECONCILE_WARNING_COOLDOWN_SEC = 30 * 60
 
 
 @dataclass
@@ -163,6 +165,7 @@ class StrategyBudgetService:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self._configs: Dict[str, StrategyBudgetConfig] = {}
         self._states: Dict[str, StrategyBudgetState] = {}
+        self._unmanaged_reconcile_warning_ts: Dict[Tuple[object, ...], float] = {}
         self._load()
 
     def _load(self) -> None:
@@ -174,6 +177,19 @@ class StrategyBudgetService:
             self._save_configs()
         if not self.state_path.exists():
             self._save_states()
+
+    def _should_log_unmanaged_reconcile_warning(self, signature: Tuple[object, ...]) -> bool:
+        """同一对账异常在冷却窗口内只打一次 warning，避免 UI 高频刷新刷屏。"""
+        now = time.monotonic()
+        last_ts = self._unmanaged_reconcile_warning_ts.get(signature)
+        if last_ts is not None and (now - last_ts) < _UNMANAGED_RECONCILE_WARNING_COOLDOWN_SEC:
+            return False
+        self._unmanaged_reconcile_warning_ts[signature] = now
+        stale_before = now - (_UNMANAGED_RECONCILE_WARNING_COOLDOWN_SEC * 2)
+        for key, ts in list(self._unmanaged_reconcile_warning_ts.items()):
+            if key != signature and ts < stale_before:
+                self._unmanaged_reconcile_warning_ts.pop(key, None)
+        return True
 
     @staticmethod
     def _looks_like_test_strategy(strategy_id: str, strategy_name: str = "") -> bool:
@@ -1986,12 +2002,19 @@ class StrategyBudgetService:
         cash_diff = round(float(broker_cash or 0.0) - claimed_cash, 2)
         unmanaged_cash = round(max(cash_diff, 0.0), 2)
         if cash_diff < -1.0:
-            logger.warning(
-                "unmanaged 对账发现已认领现金超过券商实际现金: broker_cash=%.2f claimed=%.2f diff=%.2f",
-                float(broker_cash or 0.0),
-                claimed_cash,
+            cash_warning_signature = (
+                "cash_shortfall",
+                round(float(broker_cash or 0.0), 2),
+                round(claimed_cash, 2),
                 cash_diff,
             )
+            if self._should_log_unmanaged_reconcile_warning(cash_warning_signature):
+                logger.warning(
+                    "unmanaged 对账发现已认领现金超过券商实际现金: broker_cash=%.2f claimed=%.2f diff=%.2f",
+                    float(broker_cash or 0.0),
+                    claimed_cash,
+                    cash_diff,
+                )
 
         # 持仓对账：活跃策略声明持有的股数超过券商实际持仓的情况（虚报持仓）
         position_shortfalls: List[Dict[str, object]] = []
@@ -2004,10 +2027,17 @@ class StrategyBudgetService:
                     "broker": broker_have,
                     "shortfall": int(claimed) - broker_have,
                 })
-                logger.warning(
-                    "unmanaged 对账发现策略声明持仓超过券商实际: code=%s claimed=%d broker=%d",
-                    code, int(claimed), broker_have,
+                position_warning_signature = (
+                    "position_shortfall",
+                    code,
+                    int(claimed),
+                    broker_have,
                 )
+                if self._should_log_unmanaged_reconcile_warning(position_warning_signature):
+                    logger.warning(
+                        "unmanaged 对账发现策略声明持仓超过券商实际: code=%s claimed=%d broker=%d",
+                        code, int(claimed), broker_have,
+                    )
         # 券商有但任何策略（含 unmanaged）都没声明的持仓——理论上不会发生
         # （unmanaged 会吸收所有未认领量），保留一个计数指标用于巡检
         untracked_broker_codes: List[str] = []

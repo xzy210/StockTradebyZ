@@ -10,6 +10,7 @@ Run::
 """
 from __future__ import annotations
 
+import logging
 import sys
 import tempfile
 from pathlib import Path
@@ -29,6 +30,15 @@ from trading_app.services.strategy.strategy_registry_service import StrategyRegi
 import trading_app.services.strategy.strategy_registry_service as registry_module
 
 TEST_CODE = "600816"
+
+
+class _ListHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
 
 
 def _assert(condition: bool, message: str) -> None:
@@ -103,6 +113,38 @@ def main() -> None:
             unmanaged_state = budget._states[UNMANAGED_STRATEGY_ID]  # noqa: SLF001
             _assert(TEST_CODE not in unmanaged_state.get_positions(), f"unmanaged 不应再持有 {TEST_CODE}")
             print("[release_unmanaged] OK")
+
+            managed_state.cash_balance = 200.0
+            budget._states["managed_live_case"] = managed_state  # noqa: SLF001
+            budget._save_states()  # noqa: SLF001
+            budget_logger = logging.getLogger("trading_app.services.strategy.strategy_budget_service")
+            handler = _ListHandler()
+            old_level = budget_logger.level
+            budget_logger.setLevel(logging.WARNING)
+            budget_logger.addHandler(handler)
+            try:
+                for _ in range(2):
+                    summary = budget.reconcile_unmanaged_with_broker(
+                        broker_cash=100.0,
+                        broker_positions=[
+                            {"stock_code": TEST_CODE, "volume": 5900, "open_price": 2.55},
+                        ],
+                    )
+            finally:
+                budget_logger.removeHandler(handler)
+                budget_logger.setLevel(old_level)
+            messages = [record.getMessage() for record in handler.records]
+            _assert(summary.get("cash_shortfall") == -100.0, "应返回现金短缺摘要")
+            _assert(summary.get("position_shortfalls"), "应返回持仓短缺摘要")
+            _assert(
+                sum("已认领现金超过券商实际现金" in message for message in messages) == 1,
+                "重复现金短缺 warning 应被冷却",
+            )
+            _assert(
+                sum("策略声明持仓超过券商实际" in message for message in messages) == 1,
+                "重复持仓短缺 warning 应被冷却",
+            )
+            print("[warning_cooldown] OK")
 
             print("ALL_PASSED")
         finally:
