@@ -9,10 +9,11 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Tuple, Optional, Callable
+from typing import Any, Dict, List, Tuple, Optional, Callable
 
 from common.broker_session_service import BrokerSessionService, get_broker_session_service
 from trading_app.services.market_data.market_data_gateway import get_market_data_gateway, to_xt_code as gateway_to_xt_code
+from trading_app.services.strategy.strategy_constants import normalize_symbol_code
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,10 @@ class TradeExecutor(ABC):
             (可卖数量, 成本价)
         """
         ...
+
+    def query_all_positions(self) -> List[Dict[str, Any]]:
+        """查询全部持仓，返回 [{code, quantity, cost, name, market_value}, ...]。"""
+        return []
 
     def query_order_fill(self, order_id: int,
                          timeout_secs: float = 5.0) -> dict:
@@ -190,38 +195,72 @@ class BrokerReadOnlyExecutor(TradeExecutor):
         return PriceSnapshot(price=0.0, source="none", is_fresh=False, message="无法获取有效价格")
 
     def query_position(self, code: str) -> Tuple[int, float]:
-        if not self.is_connected():
+        parsed = self._find_parsed_position(code)
+        if parsed is None:
             return 0, 0.0
-
-        try:
-            if self._broker_session_service is not None:
-                positions = self._broker_session_service.query_stock_positions()
-            else:
-                positions = self._xt_trader.query_stock_positions(self._acc)
-            xt_code = to_xt_code(code)
-            for pos in (positions or []):
-                if pos.stock_code == xt_code:
-                    return int(getattr(pos, "volume", 0) or 0), float(getattr(pos, "open_price", 0) or 0.0)
-        except Exception as e:
-            logger.error(f"查询持仓异常: {e}")
-        return 0, 0.0
+        return int(parsed.get("quantity", 0) or 0), float(parsed.get("cost", 0.0) or 0.0)
 
     def query_sellable_position(self, code: str) -> Tuple[int, float]:
-        if not self.is_connected():
+        parsed = self._find_parsed_position(code)
+        if parsed is None:
             return 0, 0.0
+        return int(parsed.get("can_use_volume", parsed.get("quantity", 0)) or 0), float(parsed.get("cost", 0.0) or 0.0)
 
+    def query_all_positions(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for parsed in self._iter_parsed_positions():
+            rows.append(
+                {
+                    "code": parsed["code"],
+                    "quantity": parsed["quantity"],
+                    "cost": parsed["cost"],
+                    "name": parsed.get("name", ""),
+                    "market_value": parsed.get("market_value", 0.0),
+                }
+            )
+        return rows
+
+    def _find_parsed_position(self, code: str) -> Optional[Dict[str, Any]]:
+        target = normalize_symbol_code(code)
+        if not target:
+            return None
+        for parsed in self._iter_parsed_positions():
+            if parsed["code"] == target:
+                return parsed
+        return None
+
+    def _iter_parsed_positions(self) -> List[Dict[str, Any]]:
+        if not self.is_connected():
+            return []
         try:
             if self._broker_session_service is not None:
                 positions = self._broker_session_service.query_stock_positions()
             else:
                 positions = self._xt_trader.query_stock_positions(self._acc)
-            xt_code = to_xt_code(code)
-            for pos in (positions or []):
-                if pos.stock_code == xt_code:
-                    return int(getattr(pos, "can_use_volume", 0) or 0), float(getattr(pos, "open_price", 0) or 0.0)
-        except Exception as e:
-            logger.error(f"查询可卖持仓异常: {e}")
-        return 0, 0.0
+        except Exception as exc:
+            logger.error("查询持仓异常: %s", exc)
+            return []
+        rows: List[Dict[str, Any]] = []
+        for pos in positions or []:
+            parsed = self._parse_broker_position(pos)
+            if parsed is not None:
+                rows.append(parsed)
+        return rows
+
+    @staticmethod
+    def _parse_broker_position(pos) -> Optional[Dict[str, Any]]:
+        code = normalize_symbol_code(getattr(pos, "stock_code", "") or "")
+        quantity = int(getattr(pos, "volume", 0) or 0)
+        if not code or quantity <= 0:
+            return None
+        return {
+            "code": code,
+            "quantity": quantity,
+            "can_use_volume": int(getattr(pos, "can_use_volume", quantity) or quantity),
+            "cost": float(getattr(pos, "open_price", 0.0) or 0.0),
+            "name": str(getattr(pos, "stock_name", "") or ""),
+            "market_value": float(getattr(pos, "market_value", 0.0) or 0.0),
+        }
 
     def query_available_cash(self) -> float:
         if not self.is_connected():
@@ -386,13 +425,30 @@ class SimulatedExecutor(TradeExecutor):
         return self._prices.get(code, 0.0)
 
     def query_position(self, code: str) -> Tuple[int, float]:
-        pos = self.positions.get(code)
+        pos = self.positions.get(code) or self.positions.get(normalize_symbol_code(code))
         if pos:
             return pos['quantity'], pos['avg_price']
         return 0, 0.0
 
     def query_sellable_position(self, code: str) -> Tuple[int, float]:
         return self.query_position(code)
+
+    def query_all_positions(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        for code, pos in (self.positions or {}).items():
+            quantity = int((pos or {}).get("quantity", 0) or 0)
+            if quantity <= 0:
+                continue
+            rows.append(
+                {
+                    "code": normalize_symbol_code(code),
+                    "quantity": quantity,
+                    "cost": float((pos or {}).get("avg_price", 0.0) or 0.0),
+                    "name": "",
+                    "market_value": 0.0,
+                }
+            )
+        return rows
 
 
 XtQuantExecutor = BrokerReadOnlyExecutor

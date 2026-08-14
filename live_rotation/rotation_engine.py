@@ -335,15 +335,16 @@ class RotationEngine(QObject):
         return True, decision.reason or "策略风控通过"
 
     def _run_startup_reconcile(self):
+        self._reconcile_holdings(source="startup")
+
+    def _reconcile_holdings(self, *, source: str = "startup") -> None:
         if isinstance(self.executor, SimulatedExecutor):
             return
-        if not self.executor.is_connected():
-            return
         try:
-            result = self.reconciler.reconcile(self)
-            self._log(f"启动对账完成: {result}")
+            result = self.reconciler.reconcile(self, source=source)
+            self._log(f"持仓对账完成[{source}]: {result}")
         except Exception as exc:
-            logger.error(f"启动对账失败: {exc}")
+            logger.error("持仓对账失败[%s]: %s", source, exc)
 
     def _check_live_market_data_ready(self, *, require_minute_freshness: bool = False) -> tuple[bool, str]:
         """检查行情数据是否就绪（委托给运行编排服务）。"""
@@ -354,6 +355,7 @@ class RotationEngine(QObject):
     def run_signal_check(self, schedule_context: Optional[dict] = None) -> dict:
         """Run one signal check and return pure strategy signals."""
         self._refresh_service_contexts()
+        self._reconcile_holdings(source="signal_check")
         return self.runtime_service.run_signal_check(schedule_context=schedule_context)
 
     def generate_live_signals(self, payload: Optional[dict] = None) -> list[StrategySignal]:

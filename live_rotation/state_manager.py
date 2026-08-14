@@ -272,14 +272,17 @@ class StateManager:
     def _state_from_budget_record(self, record: StrategyBudgetState) -> RotationState:
         runtime = dict(getattr(record, "runtime_state", {}) or {})
         positions = record.get_positions()
-        current_holding = normalize_symbol_code(str(runtime.get("current_holding", "") or ""))
+        current_holding = normalize_symbol_code(str(runtime.get("current_holding", "") or "")) or None
         current_position = positions.get(current_holding) if current_holding else None
         if current_position is None:
             current_position = next(
                 (pos for pos in positions.values() if int(getattr(pos, "quantity", 0) or 0) > 0),
                 None,
             )
-            current_holding = current_position.symbol_code if current_position is not None else None
+            if current_position is not None:
+                current_holding = normalize_symbol_code(
+                    str(getattr(current_position, "symbol_code", "") or "")
+                ) or current_holding
         buy_quantity = int(getattr(current_position, "quantity", 0) or 0) if current_position else 0
         buy_price = float(getattr(current_position, "avg_cost", 0.0) or 0.0) if current_position else 0.0
         total_pnl = float(runtime.get("total_pnl", getattr(record, "realized_pnl", 0.0)) or 0.0)
@@ -473,6 +476,37 @@ class StateManager:
         s.buy_quantity = quantity
         s.buy_date = datetime.now().strftime("%Y-%m-%d")
         s.holding_high_price = price
+        self.save()
+
+    def sync_holding(
+        self,
+        code: Optional[str],
+        *,
+        name: str = "",
+        quantity: int = 0,
+        price: float = 0.0,
+    ) -> None:
+        """按对账结果同步运行态持仓，不重置买入日期。"""
+        s = self.state
+        normalized = normalize_symbol_code(code or "") or None
+        quantity = int(quantity or 0)
+        if not normalized or quantity <= 0:
+            self.clear_holding()
+            return
+        same = normalize_symbol_code(s.current_holding or "") == normalized
+        s.current_holding = normalized
+        if name:
+            s.current_holding_name = name
+        elif not s.current_holding_name:
+            s.current_holding_name = normalized
+        s.buy_quantity = quantity
+        if price > 0:
+            s.buy_price = float(price)
+        if not same:
+            s.current_score = 0.0
+            s.holding_high_price = float(price or 0.0)
+        elif price > 0:
+            s.holding_high_price = max(float(s.holding_high_price or 0.0), float(price))
         self.save()
 
     def clear_holding(self):
