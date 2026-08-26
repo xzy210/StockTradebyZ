@@ -64,6 +64,8 @@ class StrategyTradePanel(QWidget):
         self._last_broker_sync_started_at = 0.0
         self._broker_sync_interval_seconds = 30.0
         self._forced_broker_sync_interval_seconds = 3.0
+        self._refreshing = False
+        self._refresh_pending = False
 
         self._setup_ui()
         self._refresh_timer = QTimer(self)
@@ -217,13 +219,23 @@ class StrategyTradePanel(QWidget):
         self._refresh_local_view()
 
     def _refresh_local_view(self) -> None:
-        self._apply_visual_style()
-        self._refresh_positions()
-        self._refresh_today_orders()
-        self._refresh_today_trades()
-        self._refresh_history()
-        self._refresh_capital_ledger()
-        self._refresh_equity_curve()
+        if self._refreshing:
+            self._refresh_pending = True
+            return
+        self._refreshing = True
+        try:
+            self._apply_visual_style()
+            self._refresh_positions()
+            self._refresh_today_orders()
+            self._refresh_today_trades()
+            self._refresh_history()
+            self._refresh_capital_ledger()
+            self._refresh_equity_curve()
+        finally:
+            self._refreshing = False
+            if self._refresh_pending:
+                self._refresh_pending = False
+                QTimer.singleShot(0, self._refresh_local_view)
 
     def _on_broker_trade(self, trade_data: dict) -> None:
         try:

@@ -18,6 +18,7 @@ import sqlite3
 import logging
 import json
 import re
+import threading
 from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Tuple, Any
@@ -104,7 +105,9 @@ class TradeRecord:
         if not self.trade_date:
             self.trade_date = datetime.now().strftime("%Y-%m-%d")
         if not self.trade_id:
-            self.trade_id = f"{self.trade_date}_{self.stock_code}_{self.direction}_{datetime.now().strftime('%H%M%S%f')[:10]}"
+            stamp = datetime.now().strftime("%H%M%S%f")
+            order_part = int(self.broker_order_id or 0)
+            self.trade_id = f"{self.trade_date}_{self.stock_code}_{self.direction}_{order_part}_{stamp}"
     
     @property
     def total_fee(self) -> float:
@@ -583,6 +586,7 @@ class TradeRecordService(QObject):
         self.data_dir = Path(__file__).resolve().parents[2] / "data"
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / self.DB_FILE
+        self._write_lock = threading.RLock()
         
         # 初始化数据库
         self._init_database()
@@ -766,7 +770,8 @@ class TradeRecordService(QObject):
                    remark: str = "",
                    commission: float = None,
                    stamp_tax: float = None,
-                   transfer_fee: float = None) -> Optional[TradeRecord]:
+                   transfer_fee: float = None,
+                   emit_signals: bool = True) -> Optional[TradeRecord]:
         """
         添加交易记录
         
@@ -862,12 +867,11 @@ class TradeRecordService(QObject):
             self._log(f"新增交易记录: {normalized_stock_name}({code}) {record.direction_display} "
                      f"{volume}股 @ {price:.3f}")
             
-            self.record_added.emit(record)
-            self.records_changed.emit()
-            
-            # 触发自动止损（仅买入时）
-            if direction == TradeDirection.BUY.value:
-                self._trigger_auto_stop_loss(code, normalized_stock_name, price, volume, source)
+            if emit_signals:
+                self.record_added.emit(record)
+                self.records_changed.emit()
+                if direction == TradeDirection.BUY.value:
+                    self._trigger_auto_stop_loss(code, normalized_stock_name, price, volume, source)
             
             return record
             
@@ -891,6 +895,7 @@ class TradeRecordService(QObject):
                 WHERE broker_order_id = ?
                   AND stock_code = ?
                   AND direction = ?
+                  AND trade_date = ?
                   AND ABS(price - ?) < 0.0001
                   AND volume = ?
                   AND COALESCE(strategy_id, '') = ?
@@ -902,6 +907,7 @@ class TradeRecordService(QObject):
                     broker_order_id,
                     str(record.stock_code or ""),
                     str(record.direction or ""),
+                    str(record.trade_date or ""),
                     float(record.price or 0.0),
                     int(record.volume or 0),
                     str(record.strategy_id or ""),
@@ -1541,6 +1547,18 @@ class TradeRecordService(QObject):
 
         适用于次日补跑时券商成交明细为空，但本地 order_records 已保留成交量/成交价的场景。
         """
+        with self._write_lock:
+            added_count = self._sync_from_order_records_unlocked(order_records, source=source)
+        if added_count > 0:
+            self._log(f"本地委托回填成交完成，新增 {added_count} 条")
+            self.records_changed.emit()
+        return added_count
+
+    def _sync_from_order_records_unlocked(
+        self,
+        order_records: list,
+        source: str = "broker_sync",
+    ) -> int:
         added_count = 0
 
         for order in order_records or []:
@@ -1558,18 +1576,16 @@ class TradeRecordService(QObject):
                     getattr(order, "created_at", None) or getattr(order, "updated_at", None),
                     datetime.now().strftime("%Y-%m-%d"),
                 )
-                if self._is_order_synced(order_id, trade_date):
-                    continue
-
                 stock_code = str(getattr(order, "stock_code", "") or "").split(".")[0]
                 if not stock_code:
                     continue
+                # miniQMT 委托号会跨日、甚至跨品种复用，必须带日期+代码判断。
                 if self._is_order_synced(order_id, trade_date, stock_code):
                     continue
 
                 price = float(getattr(order, "executed_price", 0) or 0)
                 volume = executed_volume
-                if price <= 0 or volume <= 0:
+                if price <= 0 or price > 1e6 or volume <= 0:
                     continue
 
                 inferred_strategy_id, inferred_virtual_account_id, inferred_intent_id = self._infer_strategy_identity(
@@ -1604,15 +1620,13 @@ class TradeRecordService(QObject):
                     commission=fees["commission"],
                     stamp_tax=fees["stamp_tax"],
                     transfer_fee=fees["transfer_fee"],
+                    emit_signals=False,
                 )
-                if record:
+                if record is not None and str(getattr(record, "trade_date", "") or "") == trade_date:
                     added_count += 1
             except Exception as exc:
                 logger.error("从本地委托回填成交失败: %s", exc)
                 continue
-
-        if added_count > 0:
-            self._log(f"本地委托回填成交完成，新增 {added_count} 条")
 
         return added_count
 
@@ -3280,7 +3294,24 @@ class TradeRecordService(QObject):
         return updated
 
     def dedupe_trade_records_by_broker_order(self) -> int:
-        """清理相同委托号/策略/代码/方向下的重复成交记录。"""
+        """清理相同委托号/交易日/策略/代码/方向下的重复成交记录。
+
+        miniQMT 委托号会跨交易日、甚至跨品种复用，因此去重键必须包含
+        trade_date 与 stock_code，不能把不同交易日的成交当成重复单删掉。
+        """
+        with self._write_lock:
+            deleted, updated = self._dedupe_trade_records_by_broker_order_unlocked()
+        changed = deleted + updated
+        if changed > 0:
+            self.records_changed.emit()
+            logger.info(
+                "按委托号去重成交记录完成: deleted=%d updated=%d",
+                deleted,
+                updated,
+            )
+        return changed
+
+    def _dedupe_trade_records_by_broker_order_unlocked(self) -> tuple[int, int]:
         conn = self._get_connection()
         cursor = conn.cursor()
         deleted = 0
@@ -3300,10 +3331,16 @@ class TradeRecordService(QObject):
             rows = [dict(row) for row in cursor.fetchall()]
             groups: Dict[tuple, List[dict]] = {}
             for row in rows:
+                fallback_date = str(row.get("created_at", "") or "").split(" ")[0] or datetime.now().strftime("%Y-%m-%d")
+                normalized_trade_date = self._normalize_broker_time_to_date(
+                    row.get("trade_date", ""),
+                    fallback_date,
+                )
                 key = (
                     int(row.get("broker_order_id", 0) or 0),
                     str(row.get("stock_code", "") or ""),
                     str(row.get("direction", "") or ""),
+                    normalized_trade_date,
                     str(row.get("strategy_id", "") or ""),
                     str(row.get("virtual_account_id", "") or ""),
                 )
@@ -3346,13 +3383,7 @@ class TradeRecordService(QObject):
 
             if deleted > 0 or updated > 0:
                 conn.commit()
-                self.records_changed.emit()
-                logger.info(
-                    "按委托号去重成交记录完成: deleted=%d updated=%d",
-                    deleted,
-                    updated,
-                )
-            return deleted + updated
+            return deleted, updated
         finally:
             conn.close()
     
