@@ -1939,6 +1939,12 @@ class StrategyBudgetService:
         返回摘要 dict 用于日志和调试。
         """
         unmanaged_id = self.ensure_unmanaged_strategy()
+        ai_state = self._states.get(AI_STOCK_STRATEGY_ID)
+        if ai_state is not None:
+            try:
+                self._refresh_accounting_from_trade_records_if_needed(ai_state)
+            except Exception:
+                logger.debug("对账前刷新 AI 账本失败", exc_info=True)
 
         claimed_cash = 0.0
         claimed_qty: Dict[str, int] = {}
@@ -1958,6 +1964,7 @@ class StrategyBudgetService:
             claimed_cash += float(getattr(st, "cash_balance", 0.0) or 0.0)
             for code, pos in st.get_positions().items():
                 qty = int(getattr(pos, "quantity", 0) or 0)
+                code = normalize_symbol_code(str(code or ""))
                 if qty <= 0 or not code:
                     continue
                 claimed_qty[code] = claimed_qty.get(code, 0) + qty

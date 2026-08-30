@@ -42,6 +42,7 @@ class LiveStrategyPortfolioService:
         return self._broker_service
 
     def refresh_snapshot(self) -> dict:
+        self._repair_order_fill_duplicates()
         broker_live_positions = self.fetch_broker_live_positions()
         reconcile_summary = self.reconcile_unmanaged_from_broker(broker_live_positions)
         strategy_rows = self.build_strategy_rows(broker_live_positions)
@@ -62,6 +63,13 @@ class LiveStrategyPortfolioService:
             "daily_rows": self.build_daily_rows(active_ids),
             "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+
+    def _repair_order_fill_duplicates(self) -> None:
+        """Clean leftover 委托号/成交号 duplicate fills before portfolio reconcile."""
+        try:
+            self.trade_service.dedupe_trade_records_by_broker_order()
+        except Exception:
+            pass
 
     def active_strategy_ids(self) -> set[str]:
         ids = {

@@ -838,8 +838,10 @@ class TradeRecordService(QObject):
         )
 
         duplicate = self._find_exact_trade_duplicate(record)
+        if duplicate is None:
+            duplicate = self._find_order_fill_merge_candidate(record)
         if duplicate is not None:
-            return duplicate
+            return self._merge_identity_into_record(duplicate, record)
         
         # 保存到数据库
         try:
@@ -2923,6 +2925,166 @@ class TradeRecordService(QObject):
         match = re.search(r"成交号:(\d+)", text)
         return match.group(1) if match else ""
 
+    @staticmethod
+    def _extract_broker_order_id_from_remark(remark: str) -> str:
+        text = str(remark or "").strip()
+        if not text:
+            return ""
+        match = re.search(r"委托号:(\d+)", text)
+        return match.group(1) if match else ""
+
+    def _trade_identity_flags(self, remark: str, broker_order_id: int = 0) -> tuple[bool, bool]:
+        has_fill = bool(self._extract_broker_trade_id_from_remark(remark))
+        order_id = int(broker_order_id or 0)
+        has_order = order_id > 0 or bool(self._extract_broker_order_id_from_remark(remark))
+        return has_order, has_fill
+
+    def _merge_identity_remarks(self, left: str, right: str) -> str:
+        order_id = self._extract_broker_order_id_from_remark(left) or self._extract_broker_order_id_from_remark(right)
+        trade_id = self._extract_broker_trade_id_from_remark(left) or self._extract_broker_trade_id_from_remark(right)
+        parts: List[str] = []
+        if order_id:
+            parts.append(f"委托号:{order_id}")
+        if trade_id:
+            parts.append(f"成交号:{trade_id}")
+        leftover: List[str] = []
+        for text in (left, right):
+            cleaned = re.sub(r"委托号:\d+", "", str(text or ""))
+            cleaned = re.sub(r"成交号:\d+", "", cleaned)
+            cleaned = " ".join(cleaned.split())
+            if cleaned and cleaned not in leftover and cleaned not in parts:
+                leftover.append(cleaned)
+        parts.extend(leftover)
+        return " ".join(parts).strip()
+
+    def _resolved_broker_order_id(self, record: TradeRecord) -> int:
+        order_id = int(getattr(record, "broker_order_id", 0) or 0)
+        if order_id > 0:
+            return order_id
+        remark_order_id = self._extract_broker_order_id_from_remark(getattr(record, "remark", "") or "")
+        try:
+            return int(remark_order_id or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def _find_order_fill_merge_candidate(self, record: TradeRecord) -> Optional[TradeRecord]:
+        """Find a complementary 委托号/成交号 record for the same fill.
+
+        miniQMT 日终同步可能只带回成交号、委托号为 0；本地下单路径则先写入委托号。
+        这两条记录是同一笔成交，不能再各记一次。
+        """
+        incoming_has_order, incoming_has_fill = self._trade_identity_flags(
+            getattr(record, "remark", "") or "",
+            int(getattr(record, "broker_order_id", 0) or 0),
+        )
+        if not incoming_has_order and not incoming_has_fill:
+            return None
+
+        stock_code = str(getattr(record, "stock_code", "") or "").split(".")[0]
+        direction = str(getattr(record, "direction", "") or "")
+        trade_date = str(getattr(record, "trade_date", "") or "")
+        if not stock_code or not direction or not trade_date:
+            return None
+
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM trades
+                WHERE stock_code = ?
+                  AND direction = ?
+                  AND trade_date = ?
+                  AND ABS(price - ?) < 0.0001
+                  AND volume = ?
+                  AND COALESCE(strategy_id, '') = ?
+                  AND COALESCE(virtual_account_id, '') = ?
+                ORDER BY id ASC
+                """,
+                (
+                    stock_code,
+                    direction,
+                    trade_date,
+                    float(getattr(record, "price", 0.0) or 0.0),
+                    int(getattr(record, "volume", 0) or 0),
+                    str(getattr(record, "strategy_id", "") or ""),
+                    str(getattr(record, "virtual_account_id", "") or ""),
+                ),
+            )
+            rows = [TradeRecord.from_dict(dict(row)) for row in cursor.fetchall()]
+            conn.close()
+        except Exception:
+            logger.debug("查找委托/成交互补记录失败", exc_info=True)
+            return None
+
+        incoming_trade_id = self._extract_broker_trade_id_from_remark(getattr(record, "remark", "") or "")
+        incoming_order_id = self._resolved_broker_order_id(record)
+        candidates: List[TradeRecord] = []
+        for existing in rows:
+            existing_has_order, existing_has_fill = self._trade_identity_flags(
+                existing.remark,
+                int(existing.broker_order_id or 0),
+            )
+            existing_trade_id = self._extract_broker_trade_id_from_remark(existing.remark)
+            existing_order_id = self._resolved_broker_order_id(existing)
+            if incoming_trade_id and existing_trade_id == incoming_trade_id:
+                return existing
+            if incoming_order_id > 0 and existing_order_id == incoming_order_id and existing_has_order:
+                if not existing_has_fill or existing_trade_id == incoming_trade_id:
+                    candidates.append(existing)
+                continue
+            complementary = (
+                incoming_has_fill
+                and not incoming_has_order
+                and existing_has_order
+                and not existing_has_fill
+            ) or (
+                incoming_has_order
+                and not incoming_has_fill
+                and existing_has_fill
+                and not existing_has_order
+            )
+            if complementary:
+                candidates.append(existing)
+        if len(candidates) == 1:
+            return candidates[0]
+        return None
+
+    def _merge_identity_into_record(self, existing: TradeRecord, incoming: TradeRecord) -> TradeRecord:
+        new_remark = self._merge_identity_remarks(
+            getattr(existing, "remark", "") or "",
+            getattr(incoming, "remark", "") or "",
+        )
+        new_order_id = self._resolved_broker_order_id(existing) or self._resolved_broker_order_id(incoming)
+        existing_name = str(getattr(existing, "stock_name", "") or "").strip()
+        incoming_name = str(getattr(incoming, "stock_name", "") or "").strip()
+        code = str(getattr(existing, "stock_code", "") or "")
+        new_name = existing_name
+        if (not new_name or new_name == code) and incoming_name and incoming_name != code:
+            new_name = incoming_name
+        if (
+            new_remark == str(existing.remark or "")
+            and int(existing.broker_order_id or 0) == int(new_order_id or 0)
+            and new_name == existing_name
+        ):
+            return existing
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE trades SET remark = ?, broker_order_id = ?, stock_name = ? WHERE id = ?",
+                (new_remark, int(new_order_id or 0), new_name, int(existing.id or 0)),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            logger.debug("合并委托/成交标识失败", exc_info=True)
+            return existing
+        existing.remark = new_remark
+        existing.broker_order_id = int(new_order_id or 0)
+        existing.stock_name = new_name
+        return existing
+
     def audit_trade_records(
         self,
         *,
@@ -3381,11 +3543,90 @@ class TradeRecordService(QObject):
                     cursor.execute("DELETE FROM trades WHERE id = ?", (row_id,))
                     deleted += max(cursor.rowcount, 0)
 
+            pair_deleted, pair_updated = self._dedupe_order_fill_pairs_unlocked(cursor)
+            deleted += pair_deleted
+            updated += pair_updated
+
             if deleted > 0 or updated > 0:
                 conn.commit()
             return deleted, updated
         finally:
             conn.close()
+
+    def _dedupe_order_fill_pairs_unlocked(self, cursor) -> tuple[int, int]:
+        """Merge leftover 委托号/成交号 pairs that share the same fill fingerprint."""
+        cursor.execute(
+            """
+            SELECT id, broker_order_id, stock_code, stock_name, direction, price, volume,
+                   COALESCE(strategy_id, '') AS strategy_id,
+                   COALESCE(virtual_account_id, '') AS virtual_account_id,
+                   trade_date, remark, created_at
+            FROM trades
+            ORDER BY id ASC
+            """
+        )
+        groups: Dict[tuple, List[dict]] = {}
+        for row in cursor.fetchall():
+            item = dict(row)
+            key = (
+                str(item.get("stock_code", "") or ""),
+                str(item.get("direction", "") or ""),
+                str(item.get("trade_date", "") or ""),
+                round(float(item.get("price", 0.0) or 0.0), 4),
+                int(item.get("volume", 0) or 0),
+                str(item.get("strategy_id", "") or ""),
+                str(item.get("virtual_account_id", "") or ""),
+            )
+            groups.setdefault(key, []).append(item)
+
+        deleted = 0
+        updated = 0
+        for group_rows in groups.values():
+            if len(group_rows) != 2:
+                continue
+
+            def _kind(item: dict) -> str:
+                has_order, has_fill = self._trade_identity_flags(
+                    str(item.get("remark", "") or ""),
+                    int(item.get("broker_order_id", 0) or 0),
+                )
+                if has_order and not has_fill:
+                    return "order"
+                if has_fill and not has_order:
+                    return "fill"
+                if has_order and has_fill:
+                    return "both"
+                return "other"
+
+            kinds = {_kind(item) for item in group_rows}
+            if kinds != {"order", "fill"}:
+                continue
+            order_row = next(item for item in group_rows if _kind(item) == "order")
+            fill_row = next(item for item in group_rows if _kind(item) == "fill")
+            new_remark = self._merge_identity_remarks(
+                str(order_row.get("remark", "") or ""),
+                str(fill_row.get("remark", "") or ""),
+            )
+            new_order_id = int(order_row.get("broker_order_id", 0) or 0)
+            if new_order_id <= 0:
+                remark_order_id = self._extract_broker_order_id_from_remark(new_remark)
+                try:
+                    new_order_id = int(remark_order_id or 0)
+                except (TypeError, ValueError):
+                    new_order_id = 0
+            new_name = str(order_row.get("stock_name", "") or "").strip()
+            fill_name = str(fill_row.get("stock_name", "") or "").strip()
+            code = str(order_row.get("stock_code", "") or "")
+            if (not new_name or new_name == code) and fill_name and fill_name != code:
+                new_name = fill_name
+            cursor.execute(
+                "UPDATE trades SET remark = ?, broker_order_id = ?, stock_name = ? WHERE id = ?",
+                (new_remark, new_order_id, new_name, int(order_row.get("id", 0) or 0)),
+            )
+            updated += max(cursor.rowcount, 0)
+            cursor.execute("DELETE FROM trades WHERE id = ?", (int(fill_row.get("id", 0) or 0),))
+            deleted += max(cursor.rowcount, 0)
+        return deleted, updated
     
     def export_to_csv(self, file_path: str,
                      start_date: str = None,
