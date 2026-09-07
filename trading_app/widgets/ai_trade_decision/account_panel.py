@@ -180,6 +180,7 @@ class AccountPanel(QWidget):
     manual_order_requested = pyqtSignal()
     primary_action_requested = pyqtSignal(str)
     model_select_requested = pyqtSignal()
+    model_settings_requested = pyqtSignal()
 
     def __init__(self, parent=None, *, show_connection_panel: bool = True, shared_broker_panel=None):
         super().__init__(parent)

@@ -15,6 +15,20 @@ from PyQt6.QtWidgets import (
     QTextBrowser
 )
 
+from trading_app.services.ai.kimi_compat import (
+    KIMI_K3_MODEL,
+    KIMI_K3_REASONING_EFFORT,
+    is_kimi_k3_model,
+    migrate_retired_kimi_config,
+)
+from trading_app.services.ai.glm_compat import (
+    GLM_DEFAULT_BASE_URL,
+    GLM_FLASH_MODEL,
+    build_glm_extra_body,
+    is_glm_model,
+    resolve_glm_base_url,
+)
+
 # Try to import markdown for rich text rendering
 try:
     import markdown
@@ -656,7 +670,10 @@ class AISettingsDialog(QDialog):
         """当设置对话框中的模型切换时，加载该模型的配置"""
         config = self.model_configs.get(model_name, {"api_key": "", "base_url": ""})
         self.api_key_input.setText(config.get("api_key", ""))
-        self.base_url_input.setText(config.get("base_url", ""))
+        base_url = str(config.get("base_url", "") or "")
+        if not base_url.strip() and is_glm_model(model_name):
+            base_url = GLM_DEFAULT_BASE_URL
+        self.base_url_input.setText(base_url)
         self.form_group.setTitle(f"配置模型: {model_name}")
 
     def on_input_changed(self):
@@ -673,6 +690,7 @@ class AISettingsDialog(QDialog):
             "system_prompt": self.system_prompt_input.toPlainText().strip()
         }
 
+
 class ChatThread(QThread):
     """聊天后台线程，用于异步调用大模型 API"""
     message_received = pyqtSignal(str, bool)  # content, is_error
@@ -688,7 +706,7 @@ class ChatThread(QThread):
         use_web_search=False,
         *,
         stream=True,
-        request_timeout_seconds=120.0,
+        request_timeout_seconds=180.0,
         log_context="",
     ):
         super().__init__()
@@ -699,7 +717,7 @@ class ChatThread(QThread):
         self.messages = messages
         self.use_web_search = use_web_search
         self.stream = bool(stream)
-        self.request_timeout_seconds = float(request_timeout_seconds or 120.0)
+        self.request_timeout_seconds = float(request_timeout_seconds or 180.0)
         self.log_context = str(log_context or self.model)
 
     def run(self):
@@ -714,6 +732,9 @@ class ChatThread(QThread):
                     self.run_openai_compatible()
                 else:
                     self.run_kimi_api()
+            elif is_glm_model(self.model):
+                self.base_url = resolve_glm_base_url(self.base_url)
+                self.run_openai_compatible()
             else:
                 self.run_openai_compatible()
                 
@@ -841,43 +862,45 @@ class ChatThread(QThread):
             self.message_received.emit(f"\nAPI 调用错误: {error_msg}", True)
 
     def run_kimi_api(self):
-        """使用 Kimi K2.5 API 调用（支持多模态图片、联网搜索和 thinking 模式）
-        
-        根据官方文档: https://platform.moonshot.ai/docs/guide/kimi-k2-5-quickstart
-        - 模型名称: kimi-k2.5
-        - 支持多模态: 图片使用 image_url 类型，base64 编码
-        - 支持联网搜索: 使用 $web_search 内置工具
-        - 支持 thinking 模式: 默认启用，需要在 assistant 消息中保留 reasoning_content
-        
+        """使用 Kimi API（支持多模态图片、联网搜索和推理模式）
+
+        K3 文档: https://platform.kimi.com/docs/guide/kimi-k3-quickstart
+        - 模型名称: kimi-k3
+        - 始终开启思考，用顶层 reasoning_effort（low/high/max），不要传 thinking
+        - 不要显式传 temperature / top_p 等固定采样参数
+        - K3 联网搜索正在更新，近期不启用 $web_search
+
         注意：使用 httpx 直接发送请求，确保 reasoning_content 字段能正确传递
         （OpenAI SDK 会过滤掉不认识的字段）
         """
+        is_k3 = is_kimi_k3_model(self.model)
         base_url = self.base_url if self.base_url else "https://api.moonshot.cn/v1"
-        api_endpoint = f"{base_url}/chat/completions"
-        
-        logger.info(f"[Kimi K2.5] Starting API call, model={self.model}, use_web_search={self.use_web_search}")
-        
-        # 构建完整的对话消息
+        api_endpoint = f"{base_url.rstrip('/')}/chat/completions"
+        timeout_seconds = float(self.request_timeout_seconds or 180.0)
+
+        logger.info(
+            "[Kimi] Starting API call, model=%s, k3=%s, use_web_search=%s, timeout=%.1fs",
+            self.model, is_k3, self.use_web_search, timeout_seconds,
+        )
+
         full_messages = []
-        
-        # 构建系统提示词（Kimi K2.5 要求 system 消息内容不能为空）
         system_content = self.system_prompt.strip() if self.system_prompt else "你是 Kimi，由 Moonshot AI 提供的智能助手。"
-        
-        # 如果开启联网搜索，注入引导语让模型主动使用联网搜索工具
-        if self.use_web_search:
+
+        enable_web_search = bool(self.use_web_search) and not is_k3
+        if self.use_web_search and is_k3:
+            logger.warning("[Kimi] K3 联网搜索正在更新，本次请求不启用 $web_search")
+        if enable_web_search:
             web_search_guide = (
                 "【重要】用户已开启联网搜索功能。请在回答问题时主动使用联网搜索工具获取最新、最准确的信息。"
                 "尤其对于涉及时效性内容（如新闻、股票行情、天气、体育赛事、最新政策等）的问题，"
                 "必须先进行联网搜索再回答，不要依赖训练数据中的旧信息。"
             )
             system_content = f"{web_search_guide}\n\n{system_content}"
-        
+
         full_messages.append({"role": "system", "content": system_content})
-        
-        # 处理消息历史，确保多模态消息格式正确（Kimi K2.5 使用 image_url 类型）
+
         for msg in self.messages:
             if msg["role"] == "user" and isinstance(msg.get("content"), list):
-                # 多模态消息：转换为 Kimi K2.5 格式
                 kimi_content = []
                 for part in msg["content"]:
                     if part.get("type") == "text":
@@ -890,93 +913,86 @@ class ChatThread(QThread):
                 full_messages.append({"role": "user", "content": kimi_content})
             else:
                 full_messages.append(msg)
-        
-        # 构建工具列表
+
         tools = None
-        if self.use_web_search:
+        if enable_web_search:
             tools = [{
                 "type": "builtin_function",
                 "function": {"name": "$web_search"}
             }]
-            logger.info(f"[Kimi K2.5] Web search enabled, tools={tools}")
-        
-        # HTTP 请求头
+            logger.info("[Kimi] Web search enabled, tools=%s", tools)
+
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
         }
-        
+
         try:
-            # 循环处理工具调用（联网搜索需要多轮交互）
             max_tool_rounds = 5
             current_round = 0
-            has_reasoning_content = False  # 跟踪是否收到过 reasoning_content
-            
+            has_reasoning_content = False
+
             while current_round < max_tool_rounds:
                 current_round += 1
-                
-                # 构建请求体
+
                 request_body = {
                     "model": self.model,
                     "messages": full_messages,
                     "stream": True
                 }
+                if is_k3:
+                    request_body["reasoning_effort"] = KIMI_K3_REASONING_EFFORT
                 if tools:
                     request_body["tools"] = tools
                     request_body["tool_choice"] = "auto"
-                    # 如果之前没有收到 reasoning_content，禁用 thinking 模式
-                    # 根据官方文档：使用工具时如果模型没有产生 reasoning_content，后续请求需要禁用 thinking
-                    if current_round > 1 and not has_reasoning_content:
+                    # K2.x：工具轮次若未产生 reasoning_content，后续请求需禁用 thinking
+                    # K3 始终思考，且不接受 thinking 参数
+                    if (not is_k3) and current_round > 1 and not has_reasoning_content:
                         request_body["thinking"] = {"type": "disabled"}
-                        logger.info(f"[Kimi K2.5] Thinking disabled for round {current_round} (no reasoning_content received)")
-                
-                logger.info(f"[Kimi K2.5] Round {current_round}, messages count={len(full_messages)}")
-                
+                        logger.info("[Kimi] Thinking disabled for round %s (no reasoning_content received)", current_round)
+
+                logger.info("[Kimi] Round %s, messages count=%s", current_round, len(full_messages))
+
                 full_content = ""
                 tool_calls_data = {}
                 finish_reason = None
                 reasoning_content = ""
-                
-                # 使用 httpx 发送流式请求
-                with httpx.Client(timeout=120.0) as client:
+
+                with httpx.Client(timeout=httpx.Timeout(timeout_seconds, connect=30.0)) as client:
                     with client.stream("POST", api_endpoint, headers=headers, json=request_body) as response:
                         if response.status_code != 200:
                             error_text = response.read().decode('utf-8')
                             raise Exception(f"HTTP {response.status_code}: {error_text}")
-                        
-                        # 处理 SSE 流式响应
+
                         for line in response.iter_lines():
                             if not line or not line.startswith("data: "):
                                 continue
-                            
-                            data_str = line[6:]  # 去掉 "data: " 前缀
+
+                            data_str = line[6:]
                             if data_str == "[DONE]":
                                 break
-                            
+
                             try:
                                 chunk = json.loads(data_str)
                             except json.JSONDecodeError:
                                 continue
-                            
+
                             if not chunk.get("choices"):
                                 continue
-                            
+
                             choice = chunk["choices"][0]
                             delta = choice.get("delta", {})
                             finish_reason = choice.get("finish_reason")
-                            
-                            # 处理正常内容
+
                             if delta.get("content"):
                                 content = delta["content"]
                                 full_content += content
                                 self.message_received.emit(content, False)
-                            
-                            # 收集 reasoning_content (thinking 模式)
+
                             if delta.get("reasoning_content"):
                                 reasoning_content += delta["reasoning_content"]
-                                has_reasoning_content = True  # 标记收到了 reasoning_content
-                            
-                            # 收集工具调用信息
+                                has_reasoning_content = True
+
                             if delta.get("tool_calls"):
                                 for tool_call in delta["tool_calls"]:
                                     idx = tool_call.get("index", 0)
@@ -996,37 +1012,34 @@ class ChatThread(QThread):
                                             tool_calls_data[idx]["function"]["name"] = func["name"]
                                         if func.get("arguments"):
                                             tool_calls_data[idx]["function"]["arguments"] += func["arguments"]
-                
-                logger.info(f"[Kimi K2.5] Round {current_round} done, finish_reason={finish_reason}, "
-                           f"tool_calls={bool(tool_calls_data)}, reasoning_content_len={len(reasoning_content)}")
-                
-                # 检查是否有工具调用需要处理
+
+                logger.info(
+                    "[Kimi] Round %s done, finish_reason=%s, tool_calls=%s, reasoning_content_len=%s",
+                    current_round, finish_reason, bool(tool_calls_data), len(reasoning_content),
+                )
+
                 if finish_reason == "tool_calls" and tool_calls_data:
-                    logger.info(f"[Kimi K2.5] Processing tool_calls...")
-                    
-                    # 构建 assistant 消息（包含 tool_calls）
+                    logger.info("[Kimi] Processing tool_calls...")
+
                     tool_calls_list = [tool_calls_data[i] for i in sorted(tool_calls_data.keys())]
                     assistant_msg = {
                         "role": "assistant",
                         "content": full_content if full_content else "",
                         "tool_calls": tool_calls_list
                     }
-                    # 只有当收到 reasoning_content 时才包含该字段
-                    # 如果模型没有产生 reasoning_content，不应该包含空字符串（会导致 API 报错）
                     if reasoning_content:
                         assistant_msg["reasoning_content"] = reasoning_content
                     full_messages.append(assistant_msg)
-                    
-                    # 为每个工具调用添加 tool 消息
+
                     for tool_call in tool_calls_list:
                         tool_call_name = tool_call["function"]["name"]
                         tool_call_arguments = tool_call["function"]["arguments"]
-                        
+
                         try:
                             arguments_dict = json.loads(tool_call_arguments) if tool_call_arguments else {}
                         except json.JSONDecodeError:
                             arguments_dict = {}
-                        
+
                         tool_msg = {
                             "role": "tool",
                             "tool_call_id": tool_call["id"],
@@ -1034,17 +1047,17 @@ class ChatThread(QThread):
                             "content": json.dumps(arguments_dict)
                         }
                         full_messages.append(tool_msg)
-                        logger.info(f"[Kimi K2.5] Tool call: {tool_call_name}")
-                    
+                        logger.info("[Kimi] Tool call: %s", tool_call_name)
+
                     continue
                 else:
                     break
-            
-            logger.info(f"[Kimi K2.5] Response finished. Length: {len(full_content)}")
+
+            logger.info("[Kimi] Response finished. Length: %s", len(full_content))
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Kimi K2.5 API Error: {error_msg}")
-            self.message_received.emit(f"\nKimi K2.5 API 调用错误: {error_msg}", True)
+            logger.error("Kimi API Error: %s", error_msg)
+            self.message_received.emit(f"\nKimi API 调用错误: {error_msg}", True)
 
     def run_openai_compatible(self):
         """传统的 OpenAI 兼容模式调用"""
@@ -1053,24 +1066,31 @@ class ChatThread(QThread):
             base_url=self.base_url,
             timeout=self.request_timeout_seconds,
         )
-        
-        # 构建完整的对话消息
-        full_messages = [{"role": "system", "content": self.system_prompt}]
+
+        full_messages = []
+        if str(self.system_prompt or "").strip():
+            full_messages.append({"role": "system", "content": self.system_prompt})
         full_messages.extend(self.messages)
         start_ts = time.time()
+        create_kwargs = {
+            "model": self.model,
+            "messages": full_messages,
+            "stream": self.stream,
+        }
+        if is_glm_model(self.model):
+            extra_body = build_glm_extra_body(self.model)
+            if extra_body:
+                create_kwargs["extra_body"] = extra_body
         logger.info(
-            "[%s] OpenAI兼容请求开始: stream=%s timeout=%.1fs",
+            "[%s] OpenAI兼容请求开始: stream=%s timeout=%.1fs extra=%s",
             self.log_context,
             self.stream,
             self.request_timeout_seconds,
+            create_kwargs.get("extra_body"),
         )
         full_content = ""
         if self.stream:
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=full_messages,
-                stream=True
-            )
+            response = client.chat.completions.create(**create_kwargs)
             first_chunk_ts = None
             for chunk in response:
                 if chunk.choices and chunk.choices[0].delta.content:
@@ -1081,11 +1101,8 @@ class ChatThread(QThread):
                     full_content += content
                     self.message_received.emit(content, False)
         else:
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=full_messages,
-                stream=False,
-            )
+            create_kwargs["stream"] = False
+            response = client.chat.completions.create(**create_kwargs)
             full_content = ((response.choices[0].message.content or "") if response.choices else "") or ""
             if full_content:
                 self.message_received.emit(full_content, False)
@@ -1320,7 +1337,8 @@ class AIAgentWidget(QWidget):
             "gemini-3-pro-preview", 
             "gemini-3-flash-preview",
             "claude-3-5-sonnet",
-            "kimi-k2.5"
+            KIMI_K3_MODEL,
+            GLM_FLASH_MODEL,
         ])
         self.model_combo.setFixedWidth(180)
         self.model_combo.currentTextChanged.connect(self.on_model_selection_changed)
@@ -1521,7 +1539,8 @@ class AIAgentWidget(QWidget):
         model_lower = model_name.lower()
         is_gemini = "gemini" in model_lower
         is_kimi = "kimi" in model_lower
-        supports_web_search = is_gemini or is_kimi
+        # K3 官方联网搜索正在更新，近期不开放该开关
+        supports_web_search = is_gemini or (is_kimi and not is_kimi_k3_model(model_name))
         self.web_search_cb.setVisible(supports_web_search)
         if not supports_web_search:
             self.web_search_cb.setChecked(False)
@@ -2003,7 +2022,7 @@ class AIAgentWidget(QWidget):
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
+                    config = migrate_retired_kimi_config(json.load(f))
                     self.model_configs = config.get("model_configs", {})
                     self.system_prompt = config.get("system_prompt", "你是一个专业的股票投资顾问。")
                     
@@ -2014,6 +2033,10 @@ class AIAgentWidget(QWidget):
                             "api_key": config.get("api_key", ""),
                             "base_url": config.get("base_url", "")
                         }
+
+                    for name in self.model_configs:
+                        if name and self.model_combo.findText(name) < 0:
+                            self.model_combo.addItem(name)
 
                     # 设置当前模型
                     model = config.get("selected_model", config.get("model", ""))
@@ -2542,17 +2565,26 @@ class StockAnalysisThread(QThread):
 
     def run(self):
         try:
-            client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            base_url = self.base_url
+            extra_body = None
+            if is_glm_model(self.model):
+                base_url = resolve_glm_base_url(base_url)
+                extra_body = build_glm_extra_body(self.model)
+            client = OpenAI(api_key=self.api_key, base_url=base_url)
             
-            # Build messages
-            full_messages = [{"role": "system", "content": self.system_prompt}]
+            full_messages = []
+            if str(self.system_prompt or "").strip():
+                full_messages.append({"role": "system", "content": self.system_prompt})
             full_messages.extend(self.messages)
-            
-            response = client.chat.completions.create(
-                model=self.model,
-                messages=full_messages,
-                stream=True
-            )
+
+            create_kwargs = {
+                "model": self.model,
+                "messages": full_messages,
+                "stream": True,
+            }
+            if extra_body:
+                create_kwargs["extra_body"] = extra_body
+            response = client.chat.completions.create(**create_kwargs)
             
             for chunk in response:
                 if chunk.choices and chunk.choices[0].delta.content:

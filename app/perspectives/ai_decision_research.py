@@ -129,7 +129,7 @@ class AIDecisionResearchWidget(QWidget):
         self.lookback_spin.setSuffix(" 日")
 
         self.model_edit = QLineEdit(self)
-        self.model_edit.setPlaceholderText("例如 kimi-k2.5 / gemini-3-flash-preview")
+        self.model_edit.setPlaceholderText("例如 kimi-k3 / glm-5.3-flash / gemini-3-flash-preview")
 
         self.prompt_edit = QTextEdit(self)
         self.prompt_edit.setPlaceholderText("留空时使用 AIStockStrategyParams 默认系统提示词")

@@ -309,7 +309,8 @@ class DecisionPanel(QWidget):
         )
         try:
             with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                from trading_app.services.ai.kimi_compat import migrate_retired_kimi_config
+                return migrate_retired_kimi_config(json.load(f))
         except Exception:
             return {}
 
@@ -361,7 +362,8 @@ class DecisionPanel(QWidget):
                 "gpt-4o",
                 "gemini-3-pro-preview",
                 "gemini-3-flash-preview",
-                "kimi-k2.5",
+                "kimi-k3",
+                "glm-5.3-flash",
             ])
         selected = self._ai_config.get("selected_model", "") or getattr(self._strategy_params, "model_name", "")
         if selected and self.model_combo.findText(selected) >= 0:

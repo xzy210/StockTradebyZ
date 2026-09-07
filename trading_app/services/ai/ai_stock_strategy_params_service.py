@@ -30,6 +30,11 @@ class AIStockStrategyParamsService:
 
     def load_params(self) -> AIStockStrategyParams:
         ai_config = self._read_json(_AI_CONFIG_PATH)
+        try:
+            from trading_app.services.ai.kimi_compat import migrate_retired_kimi_config
+            ai_config = migrate_retired_kimi_config(ai_config)
+        except Exception:
+            pass
         selected_model = str(ai_config.get("selected_model", "") or "").strip()
         model_configs = dict(ai_config.get("model_configs", {}) or {})
         selected_model_config = dict(model_configs.get(selected_model, {}) or {})
